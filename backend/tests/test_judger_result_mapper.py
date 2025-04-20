@@ -39,7 +39,7 @@ class TestMapExitCode:
         (1,   "RE"),
         (143, "TLE"),
         (137, "MLE"),
-        (2,   "UNKNOWN"),
+        (2,   "RE"),
         (255, "UNKNOWN"),
     ])
     def test_all_known_codes(self, code, expected):

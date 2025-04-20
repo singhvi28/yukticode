@@ -172,10 +172,42 @@ class TestRunEndpoint:
         assert resp.status_code == 200
         assert "run_id" in resp.json()
 
+    def test_publish_includes_run_id_matching_response(self, client):
+        """Worker looks up data['run_id'] to report verdict via gRPC."""
+        resp = client.post('/run', json=RUN_PAYLOAD)
+        run_id = resp.json()["run_id"]
+        args, kwargs = client.mock_mq.publish_message.call_args
+        body = kwargs.get("body") or (args[2] if len(args) > 2 else args[1])
+        # publish_message(exchange, routing_key, body=...)
+        if body is None:
+            body = kwargs["body"]
+        assert body["run_id"] == run_id
+
     def test_oversized_src_code_returns_422(self, client):
         """DoS fix: src_code > 65536 chars must be rejected."""
         payload = {**RUN_PAYLOAD, "src_code": "x" * 65537}
         resp = client.post('/run', json=payload)
         assert resp.status_code == 422
 
+
+class TestRunBatchEndpoint:
+    BATCH_PAYLOAD = {
+        "language": "py",
+        "time_limit": 2000,
+        "memory_limit": 256,
+        "src_code": "print(1)",
+        "tests": [{"input": " ", "expected_output": "1"}],
+    }
+
+    def test_returns_batch_id_and_publishes_it(self, client):
+        resp = client.post('/run_batch', json=self.BATCH_PAYLOAD)
+        assert resp.status_code == 200
+        batch_id = resp.json()["batch_id"]
+        args, kwargs = client.mock_mq.publish_message.call_args
+        body = kwargs.get("body")
+        if body is None and len(args) >= 3:
+            body = args[2]
+        assert body["batch"] is True
+        assert body["batch_id"] == batch_id
+        assert "callback_url" not in body
 

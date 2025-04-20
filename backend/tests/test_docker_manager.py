@@ -17,7 +17,7 @@ def _make_dm(submission_id="test-123", **kwargs):
 
 
 class TestDockerManagerStartContainer:
-    def test_creates_ephemeral_container_with_auto_remove(self):
+    def test_creates_ephemeral_gvisor_container(self):
         with patch('worker.Judger.docker_manager.docker') as mock_docker:
             mock_client = MagicMock()
             mock_docker.from_env.return_value = mock_client
@@ -34,9 +34,13 @@ class TestDockerManagerStartContainer:
             _, kwargs = mock_client.containers.run.call_args
             
             assert kwargs['name'] == "judger-abc-456"
-            assert kwargs['auto_remove'] is True
+            # Explicit remove in judger.py finally — auto_remove conflicts with post-run extract
+            assert kwargs.get('auto_remove') is not True
+            # runtime is runsc when gVisor is installed, omitted otherwise
+            assert kwargs.get('runtime') in (None, 'runsc')
             assert kwargs['mem_limit'] == '256m'
             assert kwargs['network_disabled'] is True
+            assert kwargs['pids_limit'] == 64
 
     def test_builds_image_if_not_found(self):
         with patch('worker.Judger.docker_manager.docker') as mock_docker:
