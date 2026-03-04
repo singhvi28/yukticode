@@ -1,0 +1,20 @@
+docker
+fastapi
+uvicorn
+pydantic
+pika
+aio-pika
+requests
+msgpack
+
+# Testing
+pytest
+pytest-asyncio
+httpx
+
+# Database
+sqlalchemy
+alembic
+asyncpg
+passlib[argon2]
+psycopg2-binary
