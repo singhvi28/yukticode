@@ -28,16 +28,19 @@ class TestRunJudger:
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
              patch('worker.Judger.judger.put_files_to_container'), \
-             patch('worker.Judger.judger.extract_file_from_container') as mock_extract:
+             patch('worker.Judger.judger.extract_file_from_container') as mock_extract, \
+             patch('worker.Judger.judger._collect_stats', return_value=0.0):
 
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
-            
+
             # extract_file_from_container is called twice on successful run: expected then actual
             mock_extract.side_effect = ["42\n", "42\n"]
 
             result = run_judger('cpp', 2, 256, src_code='int main(){}', test_cases=[{"input": "", "expected_output": "42"}])
 
-        assert result == "AC"
+        assert result["verdict"] == "AC"
+        assert "execution_time_ms" in result
+        assert "peak_memory_mb" in result
 
     def test_returns_wa_when_outputs_differ(self):
         from worker.Judger.judger import run_judger
@@ -46,7 +49,8 @@ class TestRunJudger:
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
              patch('worker.Judger.judger.put_files_to_container'), \
-             patch('worker.Judger.judger.extract_file_from_container') as mock_extract:
+             patch('worker.Judger.judger.extract_file_from_container') as mock_extract, \
+             patch('worker.Judger.judger._collect_stats', return_value=0.0):
 
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
             # Expected "42", got "99"
@@ -54,7 +58,7 @@ class TestRunJudger:
 
             result = run_judger('cpp', 2, 256, src_code='int main(){}', test_cases=[{"input": "", "expected_output": "42"}])
 
-        assert result == "WA"
+        assert result["verdict"] == "WA"
 
     def test_handles_compile_error(self):
         from worker.Judger.judger import run_judger
@@ -68,7 +72,7 @@ class TestRunJudger:
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
             result = run_judger('cpp', 2, 256, src_code='x', test_cases=[{"input": "", "expected_output": "42"}])
 
-        assert result == "CE"
+        assert result["verdict"] == "CE"
 
     def test_handles_runtime_exception(self):
         from worker.Judger.judger import run_judger
@@ -82,7 +86,7 @@ class TestRunJudger:
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
             result = run_judger('cpp', 2, 256, src_code='x', test_cases=[{"input": "", "expected_output": "42"}])
 
-        assert result == "SYSTEM_ERROR"
+        assert result["verdict"] == "SYSTEM_ERROR"
 
 
 class TestCustomRun:
@@ -130,12 +134,13 @@ class TestTLEHandling:
 
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
-             patch('worker.Judger.judger.put_files_to_container'):
+             patch('worker.Judger.judger.put_files_to_container'), \
+             patch('worker.Judger.judger._collect_stats', return_value=0.0):
 
             mock_dm_cls.return_value.start_container.return_value = mock_container
             result = run_judger('cpp', 2, 256, src_code='x', test_cases=[{"input": "", "expected_output": "42"}])
 
-        assert result == "TLE"
+        assert result["verdict"] == "TLE"
         mock_container.stop.assert_called_once_with(timeout=2)
 
     def test_custom_run_returns_tle_when_timeout_raised(self):
@@ -215,9 +220,9 @@ class TestStaticAnalysis:
 
     def test_run_judger_returns_ce_on_security_violation(self):
         from worker.Judger.judger import run_judger
-        # No mocks needed for Docker/Language because static analysis fails first
+        # No Docker mocks needed — static analysis fires before container is touched
         result = run_judger('py', 1, 128, src_code="import os\nos.system('ls')", test_cases=[{"input": "", "expected_output": ""}])
-        assert result == "CE"
+        assert result["verdict"] == "CE"
 
     def test_custom_run_returns_ce_on_security_violation(self):
         from worker.Judger.judger import custom_run

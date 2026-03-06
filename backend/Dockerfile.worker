@@ -1,0 +1,36 @@
+# ---------------------------------------------------------------------------
+# Worker base — shared layer for submit_worker and run_worker
+# Workers need the Docker socket to spawn judger containers.
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir python-jose[cryptography] python-multipart minio
+
+# Copy the entire backend so workers can import server.config / server.db.*
+COPY . .
+
+# Default env — override in docker-compose
+ENV RABBITMQ_HOST=rabbitmq \
+    DATABASE_URL=postgresql+asyncpg://judge:judge@postgres:5432/judge
+
+# ---------------------------------------------------------------------------
+# submit_worker target
+# ---------------------------------------------------------------------------
+FROM base AS submit_worker
+WORKDIR /app/worker
+CMD ["python3", "submit_worker.py"]
+
+# ---------------------------------------------------------------------------
+# run_worker target
+# ---------------------------------------------------------------------------
+FROM base AS run_worker
+WORKDIR /app/worker
+CMD ["python3", "run_worker.py"]

@@ -1,18 +1,181 @@
-version: '3.8'
+##############################################################################
+# YuktiCode — Full-Stack Docker Compose
+#
+# Services:
+#   postgres      — primary database
+#   rabbitmq      — message broker (AMQP)
+#   minio         — S3-compatible blob storage (code + problem statements)
+#   backend       — FastAPI server (runs migrations on start)
+#   submit_worker — judger worker for submits (mounts Docker socket)
+#   run_worker    — judger worker for custom runs (mounts Docker socket)
+#   frontend      — Nginx serving the Vite SPA + reverse-proxy to backend
+#
+# Quick-start:
+#   cp .env.example .env   # edit as needed
+#   docker compose up --build
+#
+# Frontend will be at:  http://localhost
+# Backend API at:       http://localhost/api
+# MinIO console at:     http://localhost:9001
+# RabbitMQ console at:  http://localhost:15672
+##############################################################################
+
+version: '3.9'
+
+# ─── Shared healthcheck defaults ────────────────────────────────────────────
+x-healthcheck-defaults: &hc
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 20s
 
 services:
-  minio:
-    image: minio/minio
-    container_name: cf-clone-minio
-    ports:
-      - "9005:9000"
-      - "9001:9001"
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: yc-postgres
+    restart: unless-stopped
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+      POSTGRES_USER: ${POSTGRES_USER:-judge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-judge}
+      POSTGRES_DB: ${POSTGRES_DB:-judge}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      <<: *hc
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-judge} -d ${POSTGRES_DB:-judge}" ]
+
+  # ── RabbitMQ ───────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: yc-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    ports:
+      - "${RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "${RABBITMQ_UI_PORT:-15672}:15672"
+    healthcheck:
+      <<: *hc
+      test: [ "CMD", "rabbitmq-diagnostics", "ping" ]
+
+  # ── MinIO ──────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    container_name: yc-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
+    ports:
+      - "${MINIO_API_PORT:-9005}:9000"
+      - "${MINIO_UI_PORT:-9001}:9001"
+    healthcheck:
+      <<: *hc
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
 
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: yc-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-judge}:${POSTGRES_PASSWORD:-judge}@postgres:5432/${POSTGRES_DB:-judge}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_SECURE: "false"
+      JWT_SECRET: ${JWT_SECRET:-changeme_in_production_please}
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_MINUTES: "60"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    # Expose internally only; Nginx proxies to it
+    expose:
+      - "9000"
+    healthcheck:
+      <<: *hc
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/docs" ]
+
+  # ── Submit Worker ──────────────────────────────────────────────────────────
+  submit_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+      target: submit_worker
+    container_name: yc-submit-worker
+    restart: unless-stopped
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-judge}:${POSTGRES_PASSWORD:-judge}@postgres:5432/${POSTGRES_DB:-judge}
+    volumes:
+      # Mount Docker socket so the worker can spawn judger containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+  # ── Run Worker ─────────────────────────────────────────────────────────────
+  run_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+      target: run_worker
+    container_name: yc-run-worker
+    restart: unless-stopped
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+  # ── Frontend (Nginx + Vite SPA) ────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # At build time, the browser will send API calls to /api;
+        # Nginx rewrites those to the backend upstream.
+        VITE_API_URL: /api
+    container_name: yc-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      - backend
+
+# ─── Named volumes ────────────────────────────────────────────────────────────
 volumes:
+  postgres_data:
+  rabbitmq_data:
   minio_data:
