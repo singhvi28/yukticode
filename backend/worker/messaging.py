@@ -20,7 +20,7 @@ class RabbitMQConsumer:
 
         connection = pika.BlockingConnection(pika.ConnectionParameters(host))
         self.channel = connection.channel()
-        self.channel.queue_declare(queue=queue)
+        self.channel.queue_declare(queue=queue, passive=True)
         # Limit to one unacknowledged message at a time per worker so that
         # a slow callback does not block the *other* worker processes.
         self.channel.basic_qos(prefetch_count=1)

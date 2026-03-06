@@ -76,7 +76,7 @@ def compare_outputs(expected: str, actual: str) -> bool:
 
 
 def run_judger(language, time_limit, memory_limit,
-               src_code=None, std_in=None, expected_out=None):
+               src_code=None, test_cases=None):
     """
     Orchestrates the compilation and execution of the provided source code within an
     ephemeral Docker container using stream I/O, then compares the output.
@@ -92,29 +92,46 @@ def run_judger(language, time_limit, memory_limit,
         container = dm.start_container()
         language_instance = get_language_instance(language, container, time_limit, memory_limit)
 
-        put_files_to_container(container, language, src_code, std_in, expected_out)
+        # Write the source code once
+        put_files_to_container(container, language, src_code, None, None)
 
         if language in ["cpp", "java"]:
             compile_exit_code, _ = language_instance.compile(submission_id=submission_id)
             if compile_exit_code == 1:
                 return "CE"
+                
+        if not test_cases:
+            return "AC"
 
-        try:
-            run_exit_code, _ = language_instance.run(submission_id=submission_id)
-        except TLEException:
-            logger.warning("[%s] Time limit exceeded — stopping container", submission_id)
+        for i, tc in enumerate(test_cases):
+            std_in = tc.get("input", "")
+            expected_out = tc.get("expected_output", "")
+            
+            # Write just the I/O text files for this specific test case iteration
+            put_files_to_container(container, language, None, std_in, expected_out)
+
             try:
-                container.stop(timeout=2)
-            except Exception:
-                pass
-            return "TLE"
+                run_exit_code, _ = language_instance.run(submission_id=submission_id)
+            except TLEException:
+                logger.warning("[%s] Time limit exceeded on test case %d", submission_id, i+1)
+                try:
+                    container.stop(timeout=2)
+                except Exception:
+                    pass
+                return "TLE"
 
-        if run_exit_code == 0:
+            if run_exit_code != 0:
+                logger.warning("[%s] Non-zero exit code %s on test case %d", submission_id, run_exit_code, i+1)
+                return map_exit_code(run_exit_code)
+
             expected_op_data = extract_file_from_container(container, "/workspace/expected_op.txt")
             actual_op_data = extract_file_from_container(container, "/workspace/actual_op.txt")
-            return "AC" if compare_outputs(expected_op_data, actual_op_data) else "WA"
+            
+            if not compare_outputs(expected_op_data, actual_op_data):
+                logger.info("[%s] Wrong Answer on test case %d", submission_id, i+1)
+                return "WA"
 
-        return map_exit_code(run_exit_code)
+        return "AC"
 
     except SecurityViolationException as e:
         logger.warning("[%s] Security violation: %s", submission_id, str(e))

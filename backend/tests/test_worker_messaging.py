@@ -34,7 +34,7 @@ class TestRabbitMQConsumerInit:
             from worker.messaging import RabbitMQConsumer
             RabbitMQConsumer(host='localhost', queue='my_queue', callback=MagicMock())
 
-            mock_channel.queue_declare.assert_called_once_with(queue='my_queue')
+            mock_channel.queue_declare.assert_called_once_with(queue='my_queue', passive=True)
 
     def test_connection_uses_provided_host(self):
         with patch('worker.messaging.pika') as mock_pika:

@@ -5,10 +5,10 @@ All external dependencies are mocked — no real pika or HTTP connections.
 import sys
 import os
 import types
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 
 import pytest
-import asyncio
+import time
 import msgpack
 import httpx
 
@@ -42,55 +42,52 @@ def sw():
 
 
 # ---------------------------------------------------------------------------
-# send_callback tests
+# send_callback tests  (synchronous — uses httpx.Client, not AsyncClient)
 # ---------------------------------------------------------------------------
 
 class TestSendCallback:
-    @pytest.mark.asyncio
-    async def test_delivers_on_first_attempt(self, sw):
+    def test_delivers_on_first_attempt(self, sw):
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
 
-        with patch('httpx.AsyncClient') as MockClient:
-            instance = AsyncMock()
-            instance.post = AsyncMock(return_value=mock_response)
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=instance)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+        with patch('httpx.Client') as MockClient:
+            instance = MagicMock()
+            instance.post = MagicMock(return_value=mock_response)
+            MockClient.return_value.__enter__ = MagicMock(return_value=instance)
+            MockClient.return_value.__exit__ = MagicMock(return_value=False)
 
-            await sw.send_callback("http://example.com/cb", {"status": "AC"}, max_retries=3)
-            instance.post.assert_awaited_once()
+            sw.send_callback("http://example.com/cb", {"status": "AC"}, max_retries=3)
+            instance.post.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_retries_on_timeout_and_succeeds(self, sw):
+    def test_retries_on_timeout_and_succeeds(self, sw):
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
 
-        with patch('httpx.AsyncClient') as MockClient:
-            instance = AsyncMock()
-            instance.post = AsyncMock(
+        with patch('httpx.Client') as MockClient, \
+             patch('time.sleep'):
+            instance = MagicMock()
+            instance.post = MagicMock(
                 side_effect=[httpx.TimeoutException("timed out"), mock_response]
             )
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=instance)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+            MockClient.return_value.__enter__ = MagicMock(return_value=instance)
+            MockClient.return_value.__exit__ = MagicMock(return_value=False)
 
-            with patch('asyncio.sleep', new_callable=AsyncMock):
-                await sw.send_callback("http://example.com/cb", {"status": "AC"}, max_retries=3)
+            sw.send_callback("http://example.com/cb", {"status": "AC"}, max_retries=3)
 
-            assert instance.post.await_count == 2
+        assert instance.post.call_count == 2
 
-    @pytest.mark.asyncio
-    async def test_raises_after_max_retries_exhausted(self, sw):
-        with patch('httpx.AsyncClient') as MockClient:
-            instance = AsyncMock()
-            instance.post = AsyncMock(side_effect=httpx.TimeoutException("always out"))
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=instance)
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
+    def test_raises_after_max_retries_exhausted(self, sw):
+        with patch('httpx.Client') as MockClient, \
+             patch('time.sleep'):
+            instance = MagicMock()
+            instance.post = MagicMock(side_effect=httpx.TimeoutException("always out"))
+            MockClient.return_value.__enter__ = MagicMock(return_value=instance)
+            MockClient.return_value.__exit__ = MagicMock(return_value=False)
 
-            with patch('asyncio.sleep', new_callable=AsyncMock):
-                with pytest.raises(httpx.TimeoutException):
-                    await sw.send_callback("http://example.com/cb", {"status": "AC"}, max_retries=3)
+            with pytest.raises(httpx.TimeoutException):
+                sw.send_callback("http://example.com/cb", {"status": "AC"}, max_retries=3)
 
-            assert instance.post.await_count == 3
+        assert instance.post.call_count == 3
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +98,7 @@ class TestSubmitCallbackAckNack:
     def _body(self):
         return msgpack.packb({
             "language": "py", "time_limit": 2, "memory_limit": 256,
-            "src_code": "print(1)", "std_in": "", "expected_out": "1",
+            "src_code": "print(1)", "test_cases": [],
             "callback_url": "http://example.com/cb",
         })
 
@@ -110,7 +107,7 @@ class TestSubmitCallbackAckNack:
         method.delivery_tag = 7
 
         with patch.object(sw, 'judger') as mock_judger, \
-             patch.object(sw, 'send_callback', new_callable=AsyncMock) as mock_send:
+             patch.object(sw, 'send_callback') as mock_send:
             mock_judger.run_judger.return_value = "AC"
             mock_send.return_value = None
             sw.submit_callback(ch, method, props, self._body())
@@ -123,7 +120,7 @@ class TestSubmitCallbackAckNack:
         method.delivery_tag = 42
 
         with patch.object(sw, 'judger') as mock_judger, \
-             patch.object(sw, 'send_callback', new_callable=AsyncMock) as mock_send:
+             patch.object(sw, 'send_callback') as mock_send:
             mock_judger.run_judger.return_value = "AC"
             mock_send.side_effect = httpx.TimeoutException("gone")
             sw.submit_callback(ch, method, props, self._body())

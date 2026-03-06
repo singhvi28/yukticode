@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from server.db.database import Base
-from server.db.models import User, Problem, ProblemVersion
+from server.db.models import User, Problem, ProblemVersion, TestCase
 from server.config import DATABASE_URL
 from server.blob_storage import client, ensure_bucket_exists, upload_text
 from server.auth import get_password_hash
@@ -85,7 +85,14 @@ async def seed():
             test_data_path="/test_data/two_sum"
         )
         db.add(pv1)
-        
+        await db.commit()
+        await db.refresh(pv1)
+
+        tc1 = TestCase(problem_version_id=pv1.id, input_data="4\n2 7 11 15\n9\n", expected_output="0 1\n", is_sample=True)
+        tc2 = TestCase(problem_version_id=pv1.id, input_data="3\n3 2 4\n6\n", expected_output="1 2\n", is_sample=True)
+        tc3 = TestCase(problem_version_id=pv1.id, input_data="2\n3 3\n6\n", expected_output="0 1\n", is_sample=False)
+        db.add_all([tc1, tc2, tc3])
+
         # Upload Valid Palindrome markdown
         vp_url = upload_text("problems", "valid_palindrome.md", valid_palindrome_md)
         p2 = Problem(title="Valid Palindrome", author_id=admin_user.id, is_published=True)
@@ -100,6 +107,13 @@ async def seed():
             test_data_path="/test_data/valid_palindrome"
         )
         db.add(pv2)
+        await db.commit()
+        await db.refresh(pv2)
+
+        tc4 = TestCase(problem_version_id=pv2.id, input_data="A man, a plan, a canal: Panama\n", expected_output="true\n", is_sample=True)
+        tc5 = TestCase(problem_version_id=pv2.id, input_data="race a car\n", expected_output="false\n", is_sample=True)
+        tc6 = TestCase(problem_version_id=pv2.id, input_data=" \n", expected_output="true\n", is_sample=False)
+        db.add_all([tc4, tc5, tc6])
         
         await db.commit()
         print("Database seeded with admin user, Two Sum, and Valid Palindrome!")

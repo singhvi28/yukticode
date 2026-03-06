@@ -73,6 +73,25 @@ class ProblemVersion(Base):
     # Relationships
     problem = relationship("Problem", back_populates="versions")
     submissions = relationship("Submission", back_populates="problem_version")
+    test_cases = relationship("TestCase", back_populates="problem_version", cascade="all, delete-orphan")
+
+
+class TestCase(Base):
+    """
+    Represents an individual I/O test case for a specific problem version.
+    """
+    __tablename__ = "test_cases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    problem_version_id = Column(Integer, ForeignKey("problem_versions.id"), nullable=False)
+    
+    input_data = Column(Text, nullable=False)
+    expected_output = Column(Text, nullable=False)
+    
+    is_sample = Column(Boolean, default=False)
+    score = Column(Integer, default=10)
+
+    problem_version = relationship("ProblemVersion", back_populates="test_cases")
 
 
 class Submission(Base):

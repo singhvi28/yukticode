@@ -4,8 +4,6 @@ The YuktiCode Online Judge is a full-stack platform for competitive programming.
 
 The server takes user-submitted code along with required parameters and assigns the execution tasks to workers via RabbitMQ. Upon completion, the workers make a POST request to callback URL provided in the request to return the status of the executed task.
 
-This Judge Server is a wrapper REST api for the [Judger System](https://github.com/AbhishekBhosale46/onlineJudge-Judger/).
-
 ## Features
 
 - **Full-Featured Frontend**: React/Vite SPA with Monaco Editor integration and a premium dark theme.
@@ -24,8 +22,6 @@ This Judge Server is a wrapper REST api for the [Judger System](https://github.c
 ![PostgreSQL](https://img.shields.io/badge/postgresql-4169e1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![RabbitMQ](https://img.shields.io/badge/Rabbitmq-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)
 
-![Judge Server System Diagram](https://github.com/AbhishekBhosale46/OnlineJudge-JudgeServer/assets/58450561/c365ba52-4525-4809-8240-818790b8d91e)
-
 ## Installation & Running Locally
 
 Clone the project:
@@ -39,8 +35,6 @@ cd OnlineJudge-JudgeServer
 
 ```bash
 cd backend
-python3 -m venv venv
-source venv/bin/activate
 pip install -r requirements.txt
 pip install python-jose[cryptography] python-multipart
 ```
@@ -51,10 +45,10 @@ Start the FastAPI Server:
 uvicorn server.main:app --host 127.0.0.1 --port 9000 --reload
 ```
 
-Start the workers (in separate terminals, with the `venv` activated):
+Start the workers (in separate terminals):
 ```bash
-python worker/submit_worker.py
-python worker/run_worker.py
+python3 worker/submit_worker.py
+python3 worker/run_worker.py
 ```
 
 ### 2. Frontend Setup

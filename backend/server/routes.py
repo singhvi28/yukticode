@@ -8,7 +8,7 @@ from .messaging import RabbitMQClient
 from .config import SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, RUN_EXCHANGE, RUN_ROUTING_KEY
 
 from server.db.database import get_db_session
-from server.db.models import Problem, ProblemVersion, Submission, User
+from server.db.models import Problem, ProblemVersion, Submission, User, TestCase
 from server.auth import get_current_user
 
 router = APIRouter()
@@ -45,20 +45,32 @@ async def submit(submit_request: SubmitRequest, current_user: User = Depends(get
     await db.commit()
     await db.refresh(new_submission)
     
+    # Fetch TestCases
+    stmt_test_cases = select(TestCase).where(TestCase.problem_version_id == latest_version.id)
+    result_test_cases = await db.execute(stmt_test_cases)
+    test_cases = result_test_cases.scalars().all()
+
+    if not test_cases:
+        # Fallback if problem has no specific test cases migrated yet
+        test_cases_payload = [{
+            "input": "3\n3 2 4\n6\n",
+            "expected_output": "1 2\n",
+        }]
+    else:
+        test_cases_payload = [{
+            "input": tc.input_data,
+            "expected_output": tc.expected_output,
+        } for tc in test_cases]
+
     # 4. Enqueue task for worker
-    # We will pass the code_url instead of src_code, so the worker downloads it!
-    # Or to avoid changing the worker too much right now, we can pass src_code, but user asked for blob storage.
-    # Actually, we will just pass src_code to worker to not break it, but we STORED it in Blob Storage.
-    # Wait, the worker expects callback_url. We will point callback_url to our own FastAPI webhook!
     callback_url = f"http://127.0.0.1:9000/webhook/submit/{new_submission.id}"
     
     payload = {
         "language": submit_request.language,
         "time_limit": latest_version.time_limit_ms,
         "memory_limit": latest_version.memory_limit_mb,
-        "src_code": submit_request.src_code, # Passing it to worker to avoid changing worker logic right now, but it's safely stored in blob for posterity
-        "std_in": "3\n3 2 4\n6\n", # Dummy test case
-        "expected_out": "1 2\n",
+        "src_code": submit_request.src_code,
+        "test_cases": test_cases_payload,  # Replaces std_in / expected_out
         "callback_url": callback_url
     }
     

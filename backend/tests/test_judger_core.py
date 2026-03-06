@@ -35,7 +35,7 @@ class TestRunJudger:
             # extract_file_from_container is called twice on successful run: expected then actual
             mock_extract.side_effect = ["42\n", "42\n"]
 
-            result = run_judger('cpp', 2, 256, src_code='int main(){}', std_in='', expected_out='42')
+            result = run_judger('cpp', 2, 256, src_code='int main(){}', test_cases=[{"input": "", "expected_output": "42"}])
 
         assert result == "AC"
 
@@ -52,7 +52,7 @@ class TestRunJudger:
             # Expected "42", got "99"
             mock_extract.side_effect = ["42\n", "99\n"]
 
-            result = run_judger('cpp', 2, 256, src_code='int main(){}', std_in='', expected_out='42')
+            result = run_judger('cpp', 2, 256, src_code='int main(){}', test_cases=[{"input": "", "expected_output": "42"}])
 
         assert result == "WA"
 
@@ -66,7 +66,7 @@ class TestRunJudger:
              patch('worker.Judger.judger.put_files_to_container'):
 
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
-            result = run_judger('cpp', 2, 256, src_code='x', std_in='', expected_out='42')
+            result = run_judger('cpp', 2, 256, src_code='x', test_cases=[{"input": "", "expected_output": "42"}])
 
         assert result == "CE"
 
@@ -80,7 +80,7 @@ class TestRunJudger:
              patch('worker.Judger.judger.put_files_to_container'):
 
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
-            result = run_judger('cpp', 2, 256, src_code='x', std_in='', expected_out='42')
+            result = run_judger('cpp', 2, 256, src_code='x', test_cases=[{"input": "", "expected_output": "42"}])
 
         assert result == "SYSTEM_ERROR"
 
@@ -133,7 +133,7 @@ class TestTLEHandling:
              patch('worker.Judger.judger.put_files_to_container'):
 
             mock_dm_cls.return_value.start_container.return_value = mock_container
-            result = run_judger('cpp', 2, 256, src_code='x', std_in='', expected_out='42')
+            result = run_judger('cpp', 2, 256, src_code='x', test_cases=[{"input": "", "expected_output": "42"}])
 
         assert result == "TLE"
         mock_container.stop.assert_called_once_with(timeout=2)
@@ -216,7 +216,7 @@ class TestStaticAnalysis:
     def test_run_judger_returns_ce_on_security_violation(self):
         from worker.Judger.judger import run_judger
         # No mocks needed for Docker/Language because static analysis fails first
-        result = run_judger('py', 1, 128, src_code="import os\nos.system('ls')", std_in='', expected_out='')
+        result = run_judger('py', 1, 128, src_code="import os\nos.system('ls')", test_cases=[{"input": "", "expected_output": ""}])
         assert result == "CE"
 
     def test_custom_run_returns_ce_on_security_violation(self):
