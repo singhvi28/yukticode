@@ -108,7 +108,7 @@ class TestSubmitCallbackAckNack:
 
         with patch.object(sw, 'judger') as mock_judger, \
              patch.object(sw, 'send_callback') as mock_send:
-            mock_judger.run_judger.return_value = "AC"
+            mock_judger.run_judger.return_value = {"verdict": "AC", "execution_time_ms": 50.0, "peak_memory_mb": 12.0}
             mock_send.return_value = None
             sw.submit_callback(ch, method, props, self._body())
 
@@ -121,7 +121,7 @@ class TestSubmitCallbackAckNack:
 
         with patch.object(sw, 'judger') as mock_judger, \
              patch.object(sw, 'send_callback') as mock_send:
-            mock_judger.run_judger.return_value = "AC"
+            mock_judger.run_judger.return_value = {"verdict": "AC", "execution_time_ms": 50.0, "peak_memory_mb": 12.0}
             mock_send.side_effect = httpx.TimeoutException("gone")
             sw.submit_callback(ch, method, props, self._body())
 

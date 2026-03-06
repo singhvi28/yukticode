@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
-import { Play, Send, Loader, Clock, Cpu, CheckCircle, XCircle } from 'lucide-react';
+import { Play, Send, Loader, Clock, Cpu, CheckCircle, XCircle, Zap } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -61,6 +61,9 @@ const ProblemDetailPage = () => {
     fetchProblem();
   }, [id]);
 
+  const WS_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:9000')
+    .replace(/^http/, 'ws');
+
   const handleSubmit = async () => {
     if (!user) {
       alert("Please login to submit code");
@@ -70,35 +73,52 @@ const ProblemDetailPage = () => {
     setSubmitting(true);
     setResult(null);
 
+    let submissionId;
     try {
       const response = await api.post('/submit', {
         problem_id: Number(id),
-        language,
+        language: language === 'python' ? 'py' : language,
         src_code: code
       });
+      submissionId = response.data.submission_id;
+    } catch (err) {
+      console.error("Submission failed", err);
+      setResult({ status: 'Error', message: 'Failed to submit code' });
+      setSubmitting(false);
+      return;
+    }
 
-      const submissionId = response.data.submission_id;
+    // Show "Judging" state immediately
+    setResult({ status: 'JUDGING' });
 
-      // Polling function
+    // --- WebSocket first ---
+    let wsResolved = false;
+
+    const applyResult = (data) => {
+      wsResolved = true;
+      setResult({
+        status: data.status,
+        time: data.execution_time_ms ? `${data.execution_time_ms.toFixed(1)}ms` : '-',
+        memory: data.peak_memory_mb ? `${data.peak_memory_mb.toFixed(1)}MB` : '-',
+        passed: data.status === 'AC' ? 15 : 0,
+        total: 15,
+        message: data.status === 'AC' ? '' : `Verdict: ${data.status}`
+      });
+      setSubmitting(false);
+    };
+
+    // --- Polling fallback (fires if WS closes before receiving a result) ---
+    const startPolling = () => {
+      if (wsResolved) return;
       const pollStatus = async () => {
+        if (wsResolved) return;
         try {
           const res = await api.get(`/submissions/${submissionId}`);
-          const status = res.data.status;
-
+          const { status, execution_time_ms, peak_memory_mb } = res.data;
           if (status === 'PENDING') {
-            // Check again in 1 second
             setTimeout(pollStatus, 1000);
           } else {
-            // Execution complete
-            setResult({
-              status: status,
-              time: res.data.execution_time_ms ? `${res.data.execution_time_ms}ms` : '-',
-              memory: res.data.peak_memory_mb ? `${res.data.peak_memory_mb}MB` : '-',
-              passed: status === 'AC' ? 15 : 0, // Mocked for now - backend doesn't send total cases yet
-              total: 15,
-              message: status === 'AC' ? '' : 'Execution failed or rejected.'
-            });
-            setSubmitting(false);
+            applyResult({ status, execution_time_ms, peak_memory_mb });
           }
         } catch (pollErr) {
           console.error("Polling failed", pollErr);
@@ -106,14 +126,44 @@ const ProblemDetailPage = () => {
           setSubmitting(false);
         }
       };
-
-      // Start polling
       pollStatus();
+    };
 
-    } catch (err) {
-      console.error("Submission failed", err);
-      setResult({ status: 'Error', message: 'Failed to submit code' });
-      setSubmitting(false);
+    try {
+      const ws = new WebSocket(`${WS_URL}/ws/submissions/${submissionId}`);
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          applyResult(data);
+        } catch {
+          // malformed message — fall back to polling
+          startPolling();
+        }
+        ws.close();
+      };
+
+      ws.onerror = () => {
+        console.warn("WebSocket error — falling back to polling");
+        startPolling();
+      };
+
+      // Closed without a message (e.g. server restart) — use polling
+      ws.onclose = () => {
+        if (!wsResolved) startPolling();
+      };
+
+      // Safety net: if nothing arrives in 30s, fall back to polling
+      setTimeout(() => {
+        if (!wsResolved) {
+          ws.close();
+          startPolling();
+        }
+      }, 30_000);
+
+    } catch (wsErr) {
+      console.warn("Unable to open WebSocket, using polling:", wsErr);
+      startPolling();
     }
   };
 
@@ -201,22 +251,36 @@ const ProblemDetailPage = () => {
 
         {/* Console / Result Area */}
         {result && (
-          <div className={`console-pane animate-fade-in ${result.status === 'AC' ? 'success' : 'error'}`}>
-            <div className="console-header">
-              <h3>
-                {result.status === 'AC' ? <CheckCircle size={18} /> : <XCircle size={18} />}
-                {result.status === 'AC' ? 'Accepted' : result.status}
-              </h3>
-            </div>
-            {result.status === 'AC' && (
-              <div className="console-stats">
-                <div className="stat"><span>Time:</span> {result.time}</div>
-                <div className="stat"><span>Memory:</span> {result.memory}</div>
-                <div className="stat"><span>Test Cases:</span> {result.passed}/{result.total}</div>
+          result.status === 'JUDGING' ? (
+            <div className="console-pane judging animate-fade-in">
+              <div className="console-header">
+                <h3>
+                  <Zap size={18} className="zap-pulse" />
+                  Judging via WebSocket…
+                </h3>
               </div>
-            )}
-            {result.message && <div className="console-message">{result.message}</div>}
-          </div>
+              <div className="judging-dots">
+                <span /><span /><span />
+              </div>
+            </div>
+          ) : (
+            <div className={`console-pane animate-fade-in ${result.status === 'AC' ? 'success' : 'error'}`}>
+              <div className="console-header">
+                <h3>
+                  {result.status === 'AC' ? <CheckCircle size={18} /> : <XCircle size={18} />}
+                  {result.status === 'AC' ? 'Accepted' : result.status}
+                </h3>
+              </div>
+              {result.status === 'AC' && (
+                <div className="console-stats">
+                  <div className="stat"><span>Time:</span> {result.time}</div>
+                  <div className="stat"><span>Memory:</span> {result.memory}</div>
+                  <div className="stat"><span>Test Cases:</span> {result.passed}/{result.total}</div>
+                </div>
+              )}
+              {result.message && <div className="console-message">{result.message}</div>}
+            </div>
+          )
         )}
       </div>
 
@@ -378,6 +442,7 @@ const ProblemDetailPage = () => {
 
         .console-pane.success { border-top-color: var(--success); }
         .console-pane.error { border-top-color: var(--error); }
+        .console-pane.judging { border-top-color: var(--accent-primary); }
 
         .console-header h3 {
           display: flex;
@@ -388,6 +453,33 @@ const ProblemDetailPage = () => {
 
         .console-pane.success h3 { color: var(--success); }
         .console-pane.error h3 { color: var(--error); }
+        .console-pane.judging h3 { color: var(--accent-primary); }
+
+        /* Pulsing bolt icon during judging */
+        @keyframes zap-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.85); }
+        }
+        .zap-pulse { animation: zap-pulse 1s ease-in-out infinite; }
+
+        /* Animated dots */
+        .judging-dots {
+          display: flex;
+          gap: 6px;
+          padding-top: 0.25rem;
+        }
+        .judging-dots span {
+          width: 7px; height: 7px;
+          border-radius: 50%;
+          background: var(--accent-primary);
+          animation: dot-bounce 1.2s ease-in-out infinite;
+        }
+        .judging-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .judging-dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes dot-bounce {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+          40% { transform: translateY(-6px); opacity: 1; }
+        }
 
         .console-stats {
           display: flex;

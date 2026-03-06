@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Code2, User, LogOut } from 'lucide-react';
+import { Code2, User, LogOut, Shield } from 'lucide-react';
 
 const Navbar = () => {
   const { user, logout } = useAuth();
@@ -23,7 +23,14 @@ const Navbar = () => {
         <div className="nav-links">
           <Link to="/problems" className="nav-link">Problems</Link>
           <Link to="/submissions" className="nav-link">Submissions</Link>
+          {user?.is_admin && (
+            <Link to="/admin/problems" className="nav-link admin-link">
+              <Shield size={14} />
+              Admin
+            </Link>
+          )}
         </div>
+
 
         <div className="nav-auth">
           {user ? (
@@ -88,6 +95,17 @@ const Navbar = () => {
 
         .nav-link:hover {
           color: var(--text-primary);
+        }
+
+        .admin-link {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+          color: var(--accent-primary) !important;
+        }
+
+        .admin-link:hover {
+          color: #60a5fa !important;
         }
 
         .nav-auth {

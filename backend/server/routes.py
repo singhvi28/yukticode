@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List
@@ -6,6 +6,7 @@ from typing import List
 from .models import SubmitRequest, RunRequest
 from .messaging import RabbitMQClient
 from .config import SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, RUN_EXCHANGE, RUN_ROUTING_KEY
+from .ws import manager as ws_manager
 
 from server.db.database import get_db_session
 from server.db.models import Problem, ProblemVersion, Submission, User, TestCase
@@ -16,6 +17,7 @@ mq = RabbitMQClient()
 
 
 import uuid
+from pydantic import BaseModel
 from server.blob_storage import upload_text, download_text
 from urllib.parse import quote
 
@@ -70,16 +72,45 @@ async def submit(submit_request: SubmitRequest, current_user: User = Depends(get
         "time_limit": latest_version.time_limit_ms,
         "memory_limit": latest_version.memory_limit_mb,
         "src_code": submit_request.src_code,
-        "test_cases": test_cases_payload,  # Replaces std_in / expected_out
+        "test_cases": test_cases_payload,
         "callback_url": callback_url
     }
     
     await mq.publish_message(SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, body=payload)
     return {"msg": "submit task enqueued", "submission_id": new_submission.id}
 
-from pydantic import BaseModel
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint — clients subscribe here immediately after POST /submit
+# ---------------------------------------------------------------------------
+
+@router.websocket("/ws/submissions/{submission_id}")
+async def ws_submission_status(submission_id: int, websocket: WebSocket):
+    """
+    Push-based alternative to polling /submissions/{id}.
+    The client connects here and waits; when the webhook fires, it receives
+    a single JSON message:
+      { "status": "AC", "execution_time_ms": 134.5, "peak_memory_mb": 18.2 }
+    and the server closes the socket.
+    """
+    await ws_manager.connect(submission_id, websocket)
+    try:
+        # Keep connection alive by reading (client should not send anything,
+        # but we must await to detect disconnects)
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(submission_id, websocket)
+
+
+# ---------------------------------------------------------------------------
+# Webhook — called by the worker when judging is complete
+# ---------------------------------------------------------------------------
+
 class WebhookPayload(BaseModel):
     status: str
+    execution_time_ms: float = 0.0
+    peak_memory_mb: float = 0.0
 
 @router.post('/webhook/submit/{submission_id}')
 async def webhook_submit(submission_id: int, payload: WebhookPayload, db: AsyncSession = Depends(get_db_session)):
@@ -89,10 +120,16 @@ async def webhook_submit(submission_id: int, payload: WebhookPayload, db: AsyncS
     
     if submission:
         submission.status = payload.status
-        # Mocking time and memory for now
-        submission.execution_time_ms = 45.0
-        submission.peak_memory_mb = 14.2
+        submission.execution_time_ms = payload.execution_time_ms
+        submission.peak_memory_mb = payload.peak_memory_mb
         await db.commit()
+
+        # Push result to any open WebSocket clients
+        await ws_manager.broadcast(submission_id, {
+            "status": payload.status,
+            "execution_time_ms": payload.execution_time_ms,
+            "peak_memory_mb": payload.peak_memory_mb,
+        })
         
     return {"msg": "ok"}
 
@@ -108,8 +145,6 @@ async def list_problems(db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(stmt)
     problems = result.scalars().all()
     
-    # Map to frontend expected structure
-    # In a real app we'd join tags, acceptance rate, etc.
     return [
         {
             "id": p.id,
@@ -145,7 +180,7 @@ async def get_problem(problem_id: int, db: AsyncSession = Depends(get_db_session
             "samples": []
         }
         
-    # Download statement markdown from Blob Storage!
+    # Download statement markdown from Blob Storage
     statement_markdown = download_text("problems", latest_version.statement_url)
     if not statement_markdown:
         statement_markdown = "Failed to load statement from Blob Storage."
@@ -161,6 +196,7 @@ async def get_problem(problem_id: int, db: AsyncSession = Depends(get_db_session
             {"id": 2, "input": "3\n3 2 4\n6", "output": "1 2"}
         ]
     }
+
 @router.get('/submissions/{submission_id}')
 async def get_submission(submission_id: int, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
     stmt = select(Submission).where(Submission.id == submission_id, Submission.user_id == current_user.id)
@@ -176,6 +212,7 @@ async def get_submission(submission_id: int, current_user: User = Depends(get_cu
         "execution_time_ms": submission.execution_time_ms,
         "peak_memory_mb": submission.peak_memory_mb
     }
+
 @router.get('/submissions')
 async def list_submissions(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
     stmt = select(Submission).where(Submission.user_id == current_user.id).order_by(Submission.submitted_at.desc())
@@ -184,7 +221,6 @@ async def list_submissions(current_user: User = Depends(get_current_user), db: A
     
     response = []
     for sub in submissions:
-        # Fetch problem title (Very inefficient N+1 query here just for quick demo purposes)
         problem_title = "Unknown"
         if sub.problem_version_id:
             pv_stmt = select(ProblemVersion).where(ProblemVersion.id == sub.problem_version_id)
@@ -199,12 +235,12 @@ async def list_submissions(current_user: User = Depends(get_current_user), db: A
                     
         response.append({
             "id": sub.id,
-            "problem_id": sub.problem_version_id, # Simplified
+            "problem_id": sub.problem_version_id,
             "problem_title": problem_title,
             "status": sub.status,
             "language": sub.language,
-            "time": f"{sub.execution_time_ms}ms" if sub.execution_time_ms else "-",
-            "memory": f"{sub.peak_memory_mb}MB" if sub.peak_memory_mb else "-",
+            "time": f"{sub.execution_time_ms:.1f}ms" if sub.execution_time_ms else "-",
+            "memory": f"{sub.peak_memory_mb:.1f}MB" if sub.peak_memory_mb else "-",
             "date": sub.submitted_at.isoformat() if sub.submitted_at else ""
         })
         

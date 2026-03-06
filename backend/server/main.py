@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .routes import router, mq
 from .auth import router as auth_router
+from .admin import router as admin_router
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -26,3 +27,5 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(auth_router)
+app.include_router(admin_router)
+

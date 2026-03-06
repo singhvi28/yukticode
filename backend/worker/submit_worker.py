@@ -66,12 +66,21 @@ def submit_callback(ch, method, properties, body):
     except Exception:
         # run_judger is designed never to raise, but be defensive
         logger.exception("Unexpected exception from run_judger — defaulting to SYSTEM_ERROR")
-        judge_result = "SYSTEM_ERROR"
+        judge_result = {"verdict": "SYSTEM_ERROR", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
 
-    logger.info("Verdict: %s — sending callback to %s", judge_result, callback_url)
+    verdict = judge_result.get("verdict", "SYSTEM_ERROR")
+    execution_time_ms = judge_result.get("execution_time_ms", 0.0)
+    peak_memory_mb = judge_result.get("peak_memory_mb", 0.0)
+
+    logger.info("Verdict: %s (%.1fms, %.1fMB) — sending callback to %s",
+                verdict, execution_time_ms, peak_memory_mb, callback_url)
 
     try:
-        send_callback(callback_url, {"status": judge_result})
+        send_callback(callback_url, {
+            "status": verdict,
+            "execution_time_ms": execution_time_ms,
+            "peak_memory_mb": peak_memory_mb,
+        })
         ch.basic_ack(delivery_tag=method.delivery_tag)
     except Exception:
         logger.exception(

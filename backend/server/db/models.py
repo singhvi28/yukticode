@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 import datetime
 
@@ -26,6 +26,7 @@ class User(Base):
     # Relationships
     problems = relationship("Problem", back_populates="author")
     submissions = relationship("Submission", back_populates="user")
+    contests_created = relationship("Contest", back_populates="creator")
 
 
 class Problem(Base):
@@ -122,3 +123,45 @@ class Submission(Base):
     # Relationships
     user = relationship("User", back_populates="submissions")
     problem_version = relationship("ProblemVersion", back_populates="submissions")
+
+
+class Contest(Base):
+    """
+    A competitive contest grouping problems within a fixed time window.
+    """
+    __tablename__ = "contests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(150), nullable=False, unique=True)
+    description = Column(Text, default="")
+
+    start_time = Column(DateTime, nullable=True)
+    end_time = Column(DateTime, nullable=True)
+
+    is_published = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # Relationships
+    creator = relationship("User", back_populates="contests_created")
+    contest_problems = relationship("ContestProblem", back_populates="contest", cascade="all, delete-orphan")
+
+
+class ContestProblem(Base):
+    """
+    Associates a problem with a contest, recording its display order and score weight.
+    """
+    __tablename__ = "contest_problems"
+    __table_args__ = (UniqueConstraint("contest_id", "problem_id", name="uq_contest_problem"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    contest_id = Column(Integer, ForeignKey("contests.id"), nullable=False)
+    problem_id = Column(Integer, ForeignKey("problems.id"), nullable=False)
+
+    score = Column(Integer, default=100)
+    display_order = Column(Integer, default=0)
+
+    # Relationships
+    contest = relationship("Contest", back_populates="contest_problems")
+    problem = relationship("Problem")

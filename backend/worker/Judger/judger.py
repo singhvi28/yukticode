@@ -1,4 +1,5 @@
 import logging
+import time
 import uuid
 import logging
 logging.basicConfig(level=logging.DEBUG)
@@ -10,6 +11,7 @@ from .languages.cpp import CppLanguage
 from .languages.python import PythonLanguage
 
 logger = logging.getLogger(__name__)
+
 
 
 class SecurityViolationException(Exception):
@@ -75,16 +77,49 @@ def compare_outputs(expected: str, actual: str) -> bool:
     return normalise(expected) == normalise(actual)
 
 
+def _collect_stats(container) -> float:
+    """
+    Read peak memory usage from Docker cgroups stats immediately after a run.
+    Returns peak_memory_mb as a float.
+
+    Memory strategy:
+      - Prefer memory_stats["max_usage"] (cgroups v1 — tracks peak across container lifetime)
+      - Fall back to memory_stats["usage"]  (cgroups v2 — current usage at sample time)
+    On any failure, returns 0.0 so callers always get a safe default.
+    """
+    try:
+        stats = container.stats(stream=False)
+        mem_stats = stats.get("memory_stats", {})
+        peak_bytes = mem_stats.get("max_usage") or mem_stats.get("usage") or 0
+        return round(peak_bytes / 1_048_576, 2)
+    except Exception:
+        logger.debug("Failed to collect container stats — defaulting to 0.0 MB")
+        return 0.0
+
+
 def run_judger(language, time_limit, memory_limit,
                src_code=None, test_cases=None):
     """
     Orchestrates the compilation and execution of the provided source code within an
     ephemeral Docker container using stream I/O, then compares the output.
 
-    Returns a verdict string: "AC", "WA", "TLE", "CE", "RE", "MLE", or "SYSTEM_ERROR".
-    Never raises — callers are guaranteed to receive a verdict they can forward to the user.
+    Returns a dict:
+      { "verdict": str, "execution_time_ms": float, "peak_memory_mb": float }
+
+    Verdict values: "AC", "WA", "TLE", "CE", "RE", "MLE", "SYSTEM_ERROR".
+    Never raises — callers are guaranteed to receive a result dict.
     """
     submission_id = str(uuid.uuid4())
+    total_time_ms: float = 0.0
+    peak_memory_mb: float = 0.0
+
+    def _result(verdict: str) -> dict:
+        return {
+            "verdict": verdict,
+            "execution_time_ms": round(total_time_ms, 2),
+            "peak_memory_mb": peak_memory_mb,
+        }
+
     try:
         check_forbidden_patterns(language, src_code)
 
@@ -98,10 +133,10 @@ def run_judger(language, time_limit, memory_limit,
         if language in ["cpp", "java"]:
             compile_exit_code, _ = language_instance.compile(submission_id=submission_id)
             if compile_exit_code == 1:
-                return "CE"
+                return _result("CE")
                 
         if not test_cases:
-            return "AC"
+            return _result("AC")
 
         for i, tc in enumerate(test_cases):
             std_in = tc.get("input", "")
@@ -111,37 +146,45 @@ def run_judger(language, time_limit, memory_limit,
             put_files_to_container(container, language, None, std_in, expected_out)
 
             try:
+                t_start = time.perf_counter()
                 run_exit_code, _ = language_instance.run(submission_id=submission_id)
+                elapsed_ms = (time.perf_counter() - t_start) * 1000.0
             except TLEException:
                 logger.warning("[%s] Time limit exceeded on test case %d", submission_id, i+1)
+                total_time_ms += time_limit  # charge full TL
+                peak_memory_mb = max(peak_memory_mb, _collect_stats(container))
                 try:
                     container.stop(timeout=2)
                 except Exception:
                     pass
-                return "TLE"
+                return _result("TLE")
+
+            total_time_ms += elapsed_ms
+            peak_memory_mb = max(peak_memory_mb, _collect_stats(container))
 
             if run_exit_code != 0:
                 logger.warning("[%s] Non-zero exit code %s on test case %d", submission_id, run_exit_code, i+1)
-                return map_exit_code(run_exit_code)
+                return _result(map_exit_code(run_exit_code))
 
             expected_op_data = extract_file_from_container(container, "/workspace/expected_op.txt")
             actual_op_data = extract_file_from_container(container, "/workspace/actual_op.txt")
             
             if not compare_outputs(expected_op_data, actual_op_data):
                 logger.info("[%s] Wrong Answer on test case %d", submission_id, i+1)
-                return "WA"
+                return _result("WA")
 
-        return "AC"
+        return _result("AC")
 
     except SecurityViolationException as e:
         logger.warning("[%s] Security violation: %s", submission_id, str(e))
-        return "CE"  # Map static analysis failures to Compilation Error
+        return _result("CE")
     except Exception:
         logger.exception(
             "[%s] Unhandled error during judging (language=%s, time_limit=%s, memory_limit=%s)",
             submission_id, language, time_limit, memory_limit,
         )
-        return "SYSTEM_ERROR"
+        return _result("SYSTEM_ERROR")
+
 
 
 def custom_run(language, time_limit, memory_limit,
