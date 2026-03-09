@@ -100,6 +100,8 @@ async def ws_submission_status(submission_id: int, websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
         ws_manager.disconnect(submission_id, websocket)
 
 
@@ -171,6 +173,8 @@ async def websocket_run(websocket: WebSocket, run_id: str):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
         ws_manager.disconnect(run_id, websocket)
 @router.get('/problems')
 async def list_problems(db: AsyncSession = Depends(get_db_session)):

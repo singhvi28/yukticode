@@ -16,7 +16,7 @@ from worker.Judger.judger import SecurityViolationException, check_forbidden_pat
 def _make_mock_language(run_exit_code=0, compile_exit_code=0):
     lang = MagicMock()
     lang.compile.return_value = (compile_exit_code, "")
-    lang.run.return_value = (run_exit_code, "")
+    lang.run.return_value = (run_exit_code, "", 100.0, 15.5)
     return lang
 
 
@@ -28,8 +28,7 @@ class TestRunJudger:
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
              patch('worker.Judger.judger.put_files_to_container'), \
-             patch('worker.Judger.judger.extract_file_from_container') as mock_extract, \
-             patch('worker.Judger.judger._collect_stats', return_value=0.0):
+             patch('worker.Judger.judger.extract_file_from_container') as mock_extract:
 
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
 
@@ -49,8 +48,7 @@ class TestRunJudger:
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
              patch('worker.Judger.judger.put_files_to_container'), \
-             patch('worker.Judger.judger.extract_file_from_container') as mock_extract, \
-             patch('worker.Judger.judger._collect_stats', return_value=0.0):
+             patch('worker.Judger.judger.extract_file_from_container') as mock_extract:
 
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
             # Expected "42", got "99"
@@ -108,8 +106,7 @@ class TestCustomRun:
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
              patch('worker.Judger.judger.put_files_to_container'), \
-             patch('worker.Judger.judger.extract_file_from_container') as mock_extract, \
-             patch('worker.Judger.judger._collect_stats', return_value=0.0):
+             patch('worker.Judger.judger.extract_file_from_container') as mock_extract:
 
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
             mock_extract.return_value = "hello\n"
@@ -147,8 +144,7 @@ class TestTLEHandling:
 
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
-             patch('worker.Judger.judger.put_files_to_container'), \
-             patch('worker.Judger.judger._collect_stats', return_value=0.0):
+             patch('worker.Judger.judger.put_files_to_container'):
 
             mock_dm_cls.return_value.start_container.return_value = mock_container
             result = run_judger('cpp', 2, 256, src_code='x', test_cases=[{"input": "", "expected_output": "42"}])
@@ -168,8 +164,7 @@ class TestTLEHandling:
 
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
-             patch('worker.Judger.judger.put_files_to_container'), \
-             patch('worker.Judger.judger._collect_stats', return_value=0.0):
+             patch('worker.Judger.judger.put_files_to_container'):
 
             mock_dm_cls.return_value.start_container.return_value = mock_container
             result = custom_run('cpp', 2, 256, src_code='x', std_in='')

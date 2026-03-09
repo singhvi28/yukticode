@@ -4,7 +4,9 @@ from abc import ABC, abstractmethod
 
 class TLEException(Exception):
     """Raised when a submission exceeds its time limit."""
-    pass
+    def __init__(self, message, peak_memory_mb=0.0):
+        super().__init__(message)
+        self.peak_memory_mb = peak_memory_mb
 
 
 class BaseLanguage(ABC):
@@ -79,11 +81,38 @@ class BaseLanguage(ABC):
             raise TLEException(f"Execution exceeded time limit of {time_limit}s")
 
         # 4. Read meta file to determine if TLE occurred gracefully from Isolate
+        # and extract actual resource usage.
         _, meta_out = self.container.exec_run("cat /workspace/meta.txt")
         meta_str = meta_out.decode('utf-8') if meta_out else ""
-        if "status:TO" in meta_str:  # Time Out
-            self._cleanup_isolate()
-            raise TLEException("Isolate reported Time Limit Exceeded")
+        
+        peak_memory_mb = 0.0
+        execution_time_ms = 0.0
+
+        for line in meta_str.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("time:"):
+                # Isolate records CPU time in seconds with fractional parts
+                try:
+                    execution_time_ms = float(line.split(':')[1]) * 1000.0
+                except ValueError:
+                    pass
+            elif line.startswith("max-rss:") or line.startswith("cg-mem:"):
+                # max-rss / cg-mem are in KB, we want MB
+                try:
+                    peak_memory_mb = float(line.split(':')[1]) / 1024.0
+                except ValueError:
+                    pass
+
+        # Time Out status is "status:TO" (Time Out) or "status:SG" (Killed by Signal usually 9 for OOM/TLE)
+        if "status:TO" in meta_str or "status:SG" in meta_str:
+            # If we see TO, it's definitely a timeout.
+            # If SG, we check if memory exceeded, if so it could be MLE, but we treat it as TLE for now 
+            # or handle it in judger.py.
+            if "status:TO" in meta_str:
+                self._cleanup_isolate()
+                raise TLEException("Isolate reported Time Limit Exceeded", peak_memory_mb=peak_memory_mb)
 
         # 5. Bring output back to /workspace/actual_op.txt so file_utils can get it
         self.container.exec_run(f"/bin/sh -c 'cp {box_dir}/actual_op.txt /workspace/actual_op.txt'")
@@ -91,7 +120,7 @@ class BaseLanguage(ABC):
         self._cleanup_isolate()
 
         # Isolate returns non-zero if the sandboxed process exits non-zero
-        return result['exit_code'], result['output']
+        return result['exit_code'], result['output'], execution_time_ms, peak_memory_mb
 
     def _cleanup_isolate(self):
         self.container.exec_run("isolate --cleanup")
