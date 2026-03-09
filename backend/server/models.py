@@ -7,13 +7,15 @@ class SubmitRequest(BaseModel):
     src_code: str
 
 
+from typing import Optional
+
 class RunRequest(BaseModel):
     language: str
     time_limit: int
     memory_limit: int
     src_code: str
     std_in: str = " "
-    callback_url: str
+    callback_url: Optional[str] = None
 
 
 class UserCreate(BaseModel):

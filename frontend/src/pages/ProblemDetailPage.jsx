@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
-import { Play, Send, Loader, Clock, Cpu, CheckCircle, XCircle, Zap } from 'lucide-react';
+import { Play, Send, Loader, Clock, Cpu, CheckCircle, XCircle, Zap, Plus, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -20,6 +20,12 @@ const ProblemDetailPage = () => {
   // Submission State
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
+
+  // Test Runner State
+  const [activeTab, setActiveTab] = useState('sample-0'); // 'sample-i' or 'custom-i'
+  const [customTests, setCustomTests] = useState([]); // [{ id: 'custom-123', input: '', expectedOutput: '' }]
+  const [runResults, setRunResults] = useState({}); // { tabId: { status, output, expectedOutput, time, memory } }
+  const [runningTests, setRunningTests] = useState(false);
 
   const defaultCode = {
     python: 'def solve():\n    # Write your solution here\n    pass\n\nif __name__ == "__main__":\n    solve()',
@@ -167,6 +173,127 @@ const ProblemDetailPage = () => {
     }
   };
 
+  const handleRunTests = async () => {
+    if (!user) {
+      alert("Please login to run code.");
+      return;
+    }
+
+    setRunningTests(true);
+    setRunResults({}); // clear old results
+
+    // Gather all tests to run
+    const samplesToRun = (problem.samples || []).map((s, i) => ({
+      tabId: `sample-${i}`,
+      input: s.input,
+      expected: s.output
+    }));
+
+    const customToRun = customTests.map((c, i) => ({
+      tabId: `custom-${i}`,
+      input: c.input,
+      expected: c.expectedOutput
+    }));
+
+    const allTests = [...samplesToRun, ...customToRun];
+    let testsCompleted = 0;
+
+    const checkAllDone = () => {
+      testsCompleted += 1;
+      if (testsCompleted === allTests.length) {
+        setRunningTests(false);
+      }
+    };
+
+    allTests.forEach(async (testData) => {
+      // 1. Mark as running
+      setRunResults(prev => ({
+        ...prev,
+        [testData.tabId]: { status: 'RUNNING' }
+      }));
+
+      try {
+        // 2. Enqueue the run task
+        const response = await api.post('/run', {
+          language: language === 'python' ? 'py' : language,
+          time_limit: Math.ceil(problem.timeLimit / 1000) || 2,
+          memory_limit: problem.memoryLimit || 256,
+          src_code: code,
+          std_in: testData.input || " " // default to single space to prevent EOF issues if empty
+        });
+
+        const runId = response.data.run_id;
+
+        // 3. Listen on the new WebSocket for the result
+        const ws = new WebSocket(`${WS_URL}/ws/runs/${runId}`);
+        let resolved = false;
+
+        ws.onmessage = (event) => {
+          try {
+            const resultData = JSON.parse(event.data);
+            resolved = true;
+            setRunResults(prev => ({
+              ...prev,
+              [testData.tabId]: {
+                status: resultData.status,
+                output: resultData.std_out,
+                expectedOutput: testData.expected,
+                time: resultData.execution_time_ms ? `${resultData.execution_time_ms.toFixed(1)}ms` : '-',
+                memory: resultData.peak_memory_mb ? `${resultData.peak_memory_mb.toFixed(1)}MB` : '-'
+              }
+            }));
+          } catch (e) {
+            console.error("Failed to parse run WS message:", e);
+            setRunResults(prev => ({
+              ...prev,
+              [testData.tabId]: { status: 'Error' }
+            }));
+          }
+          ws.close();
+          checkAllDone();
+        };
+
+        ws.onerror = () => {
+          if (!resolved) {
+            setRunResults(prev => ({
+              ...prev,
+              [testData.tabId]: { status: 'Error' }
+            }));
+            checkAllDone();
+          }
+        };
+
+        ws.onclose = () => {
+          if (!resolved) {
+            setRunResults(prev => ({
+              ...prev,
+              [testData.tabId]: { status: 'Error' }
+            }));
+            checkAllDone();
+          }
+        };
+
+        // Safety timeout (worker failed silently)
+        setTimeout(() => {
+          if (!resolved) {
+            ws.close();
+            // checkAllDone is called in onclose
+          }
+        }, 30000);
+
+      } catch (err) {
+        console.error(`Run failed for ${testData.tabId}`, err);
+        setRunResults(prev => ({
+          ...prev,
+          [testData.tabId]: { status: 'Error' }
+        }));
+        checkAllDone();
+      }
+    });
+
+    if (allTests.length === 0) setRunningTests(false);
+  };
+
   if (loading) return <div className="loading-screen"><Loader size={40} className="spinner" /></div>;
   if (!problem) return <div className="error-screen">Problem not found</div>;
 
@@ -218,8 +345,13 @@ const ProblemDetailPage = () => {
           </select>
 
           <div className="toolbar-actions">
-            <button className="btn btn-secondary btn-sm" disabled={submitting}>
-              <Play size={16} /> Run Code
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={handleRunTests}
+              disabled={submitting || runningTests}
+            >
+              {runningTests ? <Loader size={16} className="spinner" /> : <Play size={16} />}
+              Run Code
             </button>
             <button
               className="btn btn-primary btn-sm"
@@ -249,7 +381,7 @@ const ProblemDetailPage = () => {
           />
         </div>
 
-        {/* Console / Result Area */}
+        {/* Console / Result Area (for Submission only) */}
         {result && (
           result.status === 'JUDGING' ? (
             <div className="console-pane judging animate-fade-in">
@@ -282,6 +414,160 @@ const ProblemDetailPage = () => {
             </div>
           )
         )}
+
+        {/* Test Runner Pane */}
+        <div className="test-runner-pane">
+          <div className="test-runner-tabs">
+            {(problem.samples || []).map((_, i) => {
+              const tabId = `sample-${i}`;
+              const tStatus = runResults[tabId]?.status;
+              return (
+                <button
+                  key={tabId}
+                  className={`test-tab ${activeTab === tabId ? 'active' : ''} status-${tStatus?.toLowerCase() || 'none'}`}
+                  onClick={() => setActiveTab(tabId)}
+                >
+                  <span className="tab-indicator" /> Sample {i + 1}
+                </button>
+              );
+            })}
+
+            {customTests.map((_, i) => {
+              const tabId = `custom-${i}`;
+              const tStatus = runResults[tabId]?.status;
+              return (
+                <button
+                  key={tabId}
+                  className={`test-tab ${activeTab === tabId ? 'active' : ''} status-${tStatus?.toLowerCase() || 'none'}`}
+                  onClick={() => setActiveTab(tabId)}
+                >
+                  <span className="tab-indicator" /> Custom {i + 1}
+                  <Trash2
+                    size={14}
+                    className="delete-custom"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCustomTests(customTests.filter((_, idx) => idx !== i));
+                      if (activeTab === tabId) setActiveTab('sample-0');
+                    }}
+                  />
+                </button>
+              );
+            })}
+
+            <button
+              className="test-tab new-custom"
+              onClick={() => {
+                if (customTests.length < 4) {
+                  const newId = `custom-${customTests.length}`;
+                  setCustomTests([...customTests, { input: '', expectedOutput: '' }]);
+                  setActiveTab(newId);
+                }
+              }}
+              disabled={customTests.length >= 4}
+            >
+              <Plus size={16} /> Add Test
+            </button>
+          </div>
+
+          <div className="test-runner-content">
+            {activeTab.startsWith('sample-') && problem.samples?.[parseInt(activeTab.split('-')[1])] && (() => {
+              const sampleIdx = parseInt(activeTab.split('-')[1]);
+              const sample = problem.samples[sampleIdx];
+              const res = runResults[activeTab];
+              return (
+                <div className="test-split">
+                  <div className="test-io">
+                    <h4>Input</h4>
+                    <pre className="read-only-io">{sample.input}</pre>
+                    <h4>Expected Output</h4>
+                    <pre className="read-only-io">{sample.output}</pre>
+                  </div>
+                  <div className="test-result">
+                    <h4>Actual Output</h4>
+                    {res ? (
+                      <div className="result-card">
+                        <div className={`result-badge ${res.status === 'AC' ? 'success' : res.status === 'RUNNING' ? 'running' : 'error'}`}>
+                          {res.status === 'RUNNING' ? 'Running...' : res.status}
+                        </div>
+                        {res.status !== 'RUNNING' && (
+                          <>
+                            <div className="result-stats">
+                              <span><Clock size={12} /> {res.time}</span>
+                              <span><Cpu size={12} /> {res.memory}</span>
+                            </div>
+                            <pre className={`output-block ${res.status === 'AC' ? 'match' : 'mismatch'}`}>
+                              {res.output || '<No Output>'}
+                            </pre>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="empty-result">Run code to see output</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {activeTab.startsWith('custom-') && typeof customTests[parseInt(activeTab.split('-')[1])] !== 'undefined' && (() => {
+              const customIdx = parseInt(activeTab.split('-')[1]);
+              const custom = customTests[customIdx];
+              const res = runResults[activeTab];
+              return (
+                <div className="test-split">
+                  <div className="test-io">
+                    <h4>Input</h4>
+                    <textarea
+                      className="custom-textarea"
+                      value={custom.input}
+                      onChange={(e) => {
+                        const newCustoms = [...customTests];
+                        newCustoms[customIdx].input = e.target.value;
+                        setCustomTests(newCustoms);
+                      }}
+                      placeholder="Enter test input here..."
+                    />
+                    <h4>Expected Output <span className="optional">(Optional)</span></h4>
+                    <textarea
+                      className="custom-textarea optional"
+                      value={custom.expectedOutput}
+                      onChange={(e) => {
+                        const newCustoms = [...customTests];
+                        newCustoms[customIdx].expectedOutput = e.target.value;
+                        setCustomTests(newCustoms);
+                      }}
+                      placeholder="Enter expected output..."
+                    />
+                  </div>
+                  <div className="test-result">
+                    <h4>Actual Output</h4>
+                    {res ? (
+                      <div className="result-card">
+                        <div className={`result-badge ${res.status === 'AC' ? 'success' : res.status === 'RUNNING' ? 'running' : 'error'}`}>
+                          {res.status === 'RUNNING' ? 'Running...' : res.status}
+                        </div>
+                        {res.status !== 'RUNNING' && (
+                          <>
+                            <div className="result-stats">
+                              <span><Clock size={12} /> {res.time}</span>
+                              <span><Cpu size={12} /> {res.memory}</span>
+                            </div>
+                            <pre className={`output-block ${res.status === 'AC' ? 'match' : custom.expectedOutput ? 'mismatch' : 'neutral'}`}>
+                              {res.output || '<No Output>'}
+                            </pre>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="empty-result">Run code to see output</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
       </div>
 
       <style jsx>{`
@@ -296,11 +582,16 @@ const ProblemDetailPage = () => {
           width: 100%;
         }
 
-        .problem-pane, .editor-pane {
+        .editor-pane {
           flex: 1;
           display: flex;
           flex-direction: column;
-          overflow: hidden;
+          overflow: hidden; /* Ensure pane contains children */
+        }
+        
+        .editor-wrapper {
+          flex: 1;
+          min-height: 200px;
         }
         
         .problem-pane {
@@ -517,9 +808,204 @@ const ProblemDetailPage = () => {
           }
           .problem-pane, .editor-pane {
             flex: none;
-            height: 600px;
+            height: 800px;
           }
         }
+
+        /* Test Runner Styles */
+        .test-runner-pane {
+          height: 350px;
+          display: flex;
+          flex-direction: column;
+          background: rgba(0,0,0,0.3);
+          border-top: 1px solid var(--border-color);
+        }
+
+        .test-runner-tabs {
+          display: flex;
+          overflow-x: auto;
+          background: rgba(0,0,0,0.2);
+          border-bottom: 1px solid var(--border-color);
+        }
+        .test-runner-tabs::-webkit-scrollbar { height: 4px; }
+
+        .test-tab {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.75rem 1.25rem;
+          background: transparent;
+          border: none;
+          color: var(--text-secondary);
+          font-family: var(--font-main);
+          font-size: 0.875rem;
+          cursor: pointer;
+          border-bottom: 2px solid transparent;
+          white-space: nowrap;
+          transition: all 0.2s;
+        }
+
+        .test-tab:hover {
+          background: rgba(255,255,255,0.05);
+          color: var(--text-primary);
+        }
+
+        .test-tab.active {
+          color: var(--accent-primary);
+          border-bottom-color: var(--accent-primary);
+          background: rgba(0, 240, 255, 0.05);
+        }
+
+        .tab-indicator {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: transparent;
+        }
+        .status-ac .tab-indicator { background: var(--success); }
+        .status-wa .tab-indicator, .status-ce .tab-indicator, .status-re .tab-indicator, .status-system_error .tab-indicator { background: var(--error); }
+        .status-tle .tab-indicator, .status-mle .tab-indicator { background: var(--warning); }
+        .status-running .tab-indicator { 
+          background: var(--accent-primary); 
+          animation: dot-pulse 1s infinite alternate; 
+        }
+
+        @keyframes dot-pulse {
+          0% { transform: scale(0.8); opacity: 0.5; }
+          100% { transform: scale(1.2); opacity: 1; }
+        }
+
+        .delete-custom {
+          margin-left: 0.25rem;
+          opacity: 0.5;
+        }
+        .delete-custom:hover { opacity: 1; color: var(--error); }
+
+        .new-custom { opacity: 0.7; }
+        .new-custom:hover:not(:disabled) { opacity: 1; color: var(--success); }
+        .new-custom:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        .test-runner-content {
+          flex: 1;
+          overflow-y: auto;
+          padding: 1rem;
+        }
+
+        .test-split {
+          display: flex;
+          gap: 2rem;
+          height: 100%;
+        }
+
+        .test-io, .test-result {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .test-runner-content h4 {
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .optional {
+          text-transform: none;
+          display: inline-block;
+          font-size: 0.75rem;
+          opacity: 0.7;
+          margin-left: 0.5rem;
+        }
+
+        .read-only-io {
+          background: rgba(0,0,0,0.2);
+          padding: 0.75rem;
+          border-radius: 0.5rem;
+          border: 1px solid var(--border-color);
+          font-family: var(--font-mono);
+          font-size: 0.9rem;
+          margin: 0;
+          white-space: pre-wrap;
+          max-height: 100px;
+          overflow-y: auto;
+        }
+
+        .custom-textarea {
+          background: rgba(0,0,0,0.2);
+          padding: 0.75rem;
+          border-radius: 0.5rem;
+          border: 1px solid var(--border-color);
+          color: var(--text-primary);
+          font-family: var(--font-mono);
+          font-size: 0.9rem;
+          resize: none;
+          flex: 1;
+          min-height: 80px;
+        }
+        
+        .custom-textarea:focus {
+          outline: none;
+          border-color: var(--accent-primary);
+        }
+
+        .empty-result {
+          flex: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--text-secondary);
+          border: 1px dashed var(--border-color);
+          border-radius: 0.5rem;
+          font-size: 0.9rem;
+        }
+
+        .result-card {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 0.75rem;
+        }
+
+        .result-badge {
+          display: inline-block;
+          font-weight: 600;
+          font-size: 1.1rem;
+          padding: 0.25rem 0;
+        }
+        .result-badge.success { color: var(--success); }
+        .result-badge.error { color: var(--error); }
+        .result-badge.running { color: var(--accent-primary); animation: pulse 1.5s infinite; }
+
+        .result-stats {
+          display: flex;
+          gap: 1.5rem;
+          font-family: var(--font-mono);
+          font-size: 0.85rem;
+          color: var(--text-secondary);
+        }
+        
+        .result-stats span {
+          display: flex;
+          align-items: center;
+          gap: 0.35rem;
+        }
+
+        .output-block {
+          flex: 1;
+          background: rgba(0,0,0,0.2);
+          padding: 0.75rem;
+          border-radius: 0.5rem;
+          border: 1px solid var(--border-color);
+          font-family: var(--font-mono);
+          font-size: 0.9rem;
+          margin: 0;
+          white-space: pre-wrap;
+          overflow-y: auto;
+        }
+        .output-block.match { border-color: rgba(0, 255, 170, 0.3); background: rgba(0, 255, 170, 0.05); color: var(--success); }
+        .output-block.mismatch { border-color: rgba(255, 68, 68, 0.3); background: rgba(255, 68, 68, 0.05); color: var(--error); }
       `}</style>
     </div>
   );

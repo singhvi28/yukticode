@@ -15,6 +15,8 @@ import logging
 from collections import defaultdict
 from typing import DefaultDict, Set
 
+from typing import DefaultDict, Set, Union
+
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
@@ -22,24 +24,24 @@ logger = logging.getLogger(__name__)
 
 class ConnectionManager:
     def __init__(self) -> None:
-        # submission_id (int) → set of WebSocket connections
-        self._active: DefaultDict[int, Set[WebSocket]] = defaultdict(set)
+        # submission_id (int) or run_id (str) → set of WebSocket connections
+        self._active: DefaultDict[Union[int, str], Set[WebSocket]] = defaultdict(set)
 
-    async def connect(self, submission_id: int, ws: WebSocket) -> None:
+    async def connect(self, submission_id: Union[int, str], ws: WebSocket) -> None:
         await ws.accept()
         self._active[submission_id].add(ws)
-        logger.info("WS connected for submission %d (total=%d)", submission_id, len(self._active[submission_id]))
+        logger.info("WS connected for id %s (total=%d)", submission_id, len(self._active[submission_id]))
 
-    def disconnect(self, submission_id: int, ws: WebSocket) -> None:
+    def disconnect(self, submission_id: Union[int, str], ws: WebSocket) -> None:
         self._active[submission_id].discard(ws)
         if not self._active[submission_id]:
             del self._active[submission_id]
-        logger.info("WS disconnected for submission %d", submission_id)
+        logger.info("WS disconnected for id %s", submission_id)
 
-    async def broadcast(self, submission_id: int, data: dict) -> None:
+    async def broadcast(self, submission_id: Union[int, str], data: dict) -> None:
         """
-        Push `data` as JSON to every WebSocket subscribed to this submission,
-        then close each connection.  Errors on individual sockets are swallowed
+        Push `data` as JSON to every WebSocket subscribed to this ID,
+        then close each connection. Errors on individual sockets are swallowed
         so one bad client can't block others.
         """
         sockets = list(self._active.get(submission_id, []))
@@ -52,7 +54,7 @@ class ConnectionManager:
                 await ws.send_text(message)
                 await ws.close()
             except Exception:
-                logger.debug("Failed to send WS message to one client for submission %d", submission_id)
+                logger.debug("Failed to send WS message to one client for id %s", submission_id)
 
         # Clean up
         self._active.pop(submission_id, None)

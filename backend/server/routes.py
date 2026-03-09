@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List
@@ -135,10 +135,48 @@ async def webhook_submit(submission_id: int, payload: WebhookPayload, db: AsyncS
 
 
 @router.post('/run')
-async def run(run_request: RunRequest):
-    await mq.publish_message(RUN_EXCHANGE, RUN_ROUTING_KEY, body=run_request.model_dump())
-    return {"msg": "run task enqueued, result will be available at the callback server"}
+async def run(run_request: RunRequest, request: Request):
+    """
+    Enqueue a custom run execution. Generates a unique run_id, attaches the webhook
+    callback URL, and pushes the payload to RabbitMQ.
+    """
+    run_id = str(uuid.uuid4())
+    
+    # Construct the absolute internal callback URL for the worker to hit
+    base_url = str(request.base_url).rstrip("/")
+    if "api" in request.url.path:
+        # Standardize for Nginx/Docker environments
+        callback_url = f"{base_url}/api/webhook/run/{run_id}"
+    else:
+        callback_url = f"{base_url}/webhook/run/{run_id}"
+        
+    run_payload = run_request.model_dump()
+    run_payload['callback_url'] = callback_url
+    
+    await mq.publish_message(RUN_EXCHANGE, RUN_ROUTING_KEY, body=run_payload)
+    return {"msg": "run task enqueued", "run_id": run_id}
 
+@router.post('/webhook/run/{run_id}')
+async def webhook_run(run_id: str, payload: dict = Body(...)):
+    """
+    The run worker hits this endpoint to deliver the result of a custom test case.
+    We immediately broadcast the result out to any listening WebSockets.
+    """
+    await ws_manager.broadcast(run_id, payload)
+    return {"msg": "ok"}
+
+@router.websocket("/ws/runs/{run_id}")
+async def websocket_run(websocket: WebSocket, run_id: str):
+    """
+    Clients connect here after calling POST /run to receive real-time execution results.
+    """
+    await ws_manager.connect(run_id, websocket)
+    try:
+        # Keep connection open until the broadcast closes it or client disconnects
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(run_id, websocket)
 @router.get('/problems')
 async def list_problems(db: AsyncSession = Depends(get_db_session)):
     stmt = select(Problem).where(Problem.is_published == True)

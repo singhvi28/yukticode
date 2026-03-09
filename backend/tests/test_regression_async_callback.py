@@ -159,7 +159,7 @@ class TestNoAsyncioRunInWorkers:
         with patch.object(rw, 'judger') as mock_judger, \
              patch.object(rw, 'send_callback') as mock_send, \
              patch('asyncio.run') as mock_asyncio_run:
-            mock_judger.custom_run.return_value = ("AC", "output")
+            mock_judger.custom_run.return_value = {"verdict": "AC", "output": "output", "execution_time_ms": 1.0, "peak_memory_mb": 1.0}
             mock_send.return_value = None
             rw.run_callback(ch, method, MagicMock(), body)
 

@@ -192,8 +192,8 @@ def custom_run(language, time_limit, memory_limit,
     """
     Run code against a custom test case in an ephemeral container using stream I/O.
 
-    Returns (verdict, output) where verdict is one of: "AC", "TLE", "CE", "RE",
-    "MLE", "SYSTEM_ERROR". Never raises.
+    Returns a dict with: {"verdict": ..., "output": ..., "execution_time_ms": ..., "peak_memory_mb": ...}
+    verdict is one of: "AC", "TLE", "CE", "RE", "MLE", "SYSTEM_ERROR". Never raises.
     """
     submission_id = str(uuid.uuid4())
     try:
@@ -208,31 +208,34 @@ def custom_run(language, time_limit, memory_limit,
         if language in ["cpp", "java"]:
             compile_exit_code, _ = language_instance.compile(submission_id=submission_id)
             if compile_exit_code == 1:
-                return "CE", ""
+                return {"verdict": "CE", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
 
+        start_time = time.perf_counter()
         try:
             run_exit_code, _ = language_instance.run(submission_id=submission_id)
+            elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+            peak_mb = _collect_stats(container)
         except TLEException:
             logger.warning("[%s] Time limit exceeded — stopping container", submission_id)
             try:
                 container.stop(timeout=2)
             except Exception:
                 pass
-            return "TLE", ""
+            return {"verdict": "TLE", "output": "", "execution_time_ms": time_limit * 1000.0, "peak_memory_mb": _collect_stats(container)}
 
         run_output = extract_file_from_container(container, "/workspace/actual_op.txt")
 
         if run_exit_code == 0:
-            return "AC", run_output
+            return {"verdict": "AC", "output": run_output, "execution_time_ms": elapsed_ms, "peak_memory_mb": peak_mb}
 
-        return map_exit_code(run_exit_code), ""
+        return {"verdict": map_exit_code(run_exit_code), "output": "", "execution_time_ms": elapsed_ms, "peak_memory_mb": peak_mb}
 
     except SecurityViolationException as e:
         logger.warning("[%s] Security violation in custom run: %s", submission_id, str(e))
-        return "CE", ""
+        return {"verdict": "CE", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
     except Exception:
         logger.exception(
             "[%s] Unhandled error during custom run (language=%s, time_limit=%s, memory_limit=%s)",
             submission_id, language, time_limit, memory_limit,
         )
-        return "SYSTEM_ERROR", ""
+        return {"verdict": "SYSTEM_ERROR", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}

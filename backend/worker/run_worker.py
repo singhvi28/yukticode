@@ -52,7 +52,7 @@ def run_callback(ch, method, properties, body):
     logger.info("Run worker processing: language=%s, callback=%s", language, callback_url)
 
     try:
-        judge_result, judge_output = judger.custom_run(
+        judge_dict = judger.custom_run(
             language=language,
             time_limit=data["time_limit"],
             memory_limit=data["memory_limit"],
@@ -61,12 +61,22 @@ def run_callback(ch, method, properties, body):
         )
     except Exception:
         logger.exception("Unexpected exception from custom_run — defaulting to SYSTEM_ERROR")
-        judge_result, judge_output = "SYSTEM_ERROR", ""
+        judge_dict = {
+            "verdict": "SYSTEM_ERROR", 
+            "output": "", 
+            "execution_time_ms": 0.0, 
+            "peak_memory_mb": 0.0
+        }
 
-    logger.info("Verdict: %s — sending callback to %s", judge_result, callback_url)
+    logger.info("Verdict: %s — sending callback to %s", judge_dict["verdict"], callback_url)
 
     try:
-        send_callback(callback_url, {"status": judge_result, "std_out": judge_output})
+        send_callback(callback_url, {
+            "status": judge_dict["verdict"], 
+            "std_out": judge_dict.get("output", ""),
+            "execution_time_ms": judge_dict.get("execution_time_ms", 0.0),
+            "peak_memory_mb": judge_dict.get("peak_memory_mb", 0.0)
+        })
         ch.basic_ack(delivery_tag=method.delivery_tag)
     except Exception:
         logger.exception(

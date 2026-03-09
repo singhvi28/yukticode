@@ -88,6 +88,17 @@ class TestRunJudger:
 
         assert result["verdict"] == "SYSTEM_ERROR"
 
+    def test_handles_docker_exception(self):
+        from worker.Judger.judger import run_judger
+        import docker.errors
+        
+        # Simulate docker.from_env() crashing with PermissionError (DockerException)
+        with patch('worker.Judger.judger.DockerManager') as mock_dm_cls:
+            mock_dm_cls.side_effect = docker.errors.DockerException("Connection aborted: Permission denied")
+            result = run_judger('py', 2, 256, src_code='print(1)', test_cases=[{"input": "", "expected_output": "1"}])
+            
+        assert result["verdict"] == "SYSTEM_ERROR"
+
 
 class TestCustomRun:
     def test_returns_ac_and_output_on_success(self):
@@ -97,14 +108,16 @@ class TestCustomRun:
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
              patch('worker.Judger.judger.put_files_to_container'), \
-             patch('worker.Judger.judger.extract_file_from_container') as mock_extract:
+             patch('worker.Judger.judger.extract_file_from_container') as mock_extract, \
+             patch('worker.Judger.judger._collect_stats', return_value=0.0):
 
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
             mock_extract.return_value = "hello\n"
 
             result = custom_run('py', 2, 256, src_code='print("hello")', std_in='')
 
-        assert result == ("AC", "hello\n")
+        assert result["verdict"] == "AC"
+        assert result["output"] == "hello\n"
 
     def test_handles_exception(self):
         from worker.Judger.judger import custom_run
@@ -118,7 +131,7 @@ class TestCustomRun:
             mock_dm_cls.return_value.start_container.return_value = MagicMock()
             result = custom_run('py', 2, 256, src_code='x', std_in='')
 
-        assert result == ("SYSTEM_ERROR", "")
+        assert result["verdict"] == "SYSTEM_ERROR"
 
 
 class TestTLEHandling:
@@ -155,12 +168,13 @@ class TestTLEHandling:
 
         with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
              patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
-             patch('worker.Judger.judger.put_files_to_container'):
+             patch('worker.Judger.judger.put_files_to_container'), \
+             patch('worker.Judger.judger._collect_stats', return_value=0.0):
 
             mock_dm_cls.return_value.start_container.return_value = mock_container
             result = custom_run('cpp', 2, 256, src_code='x', std_in='')
 
-        assert result == ("TLE", "")
+        assert result["verdict"] == "TLE"
         mock_container.stop.assert_called_once_with(timeout=2)
 
 
@@ -227,4 +241,4 @@ class TestStaticAnalysis:
     def test_custom_run_returns_ce_on_security_violation(self):
         from worker.Judger.judger import custom_run
         result = custom_run('cpp', 1, 128, src_code="system('ls')", std_in='')
-        assert result == ("CE", "")
+        assert result["verdict"] == "CE"

@@ -142,7 +142,8 @@ class TestRunEndpoint:
         from server.config import RUN_EXCHANGE
         assert args[0] == RUN_EXCHANGE
 
-    def test_missing_callback_url_returns_422(self, client):
+    def test_missing_callback_url_succeeds_and_generates_run_id(self, client):
         payload = {k: v for k, v in RUN_PAYLOAD.items() if k != "callback_url"}
         resp = client.post('/run', json=payload)
-        assert resp.status_code == 422
+        assert resp.status_code == 200
+        assert "run_id" in resp.json()
