@@ -6,6 +6,7 @@ pika
 aio-pika
 requests
 msgpack
+redis
 
 # Testing
 pytest

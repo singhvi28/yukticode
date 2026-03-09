@@ -13,52 +13,99 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from typing import DefaultDict, Set
-
 from typing import DefaultDict, Set, Union
 
+import redis.asyncio as redis
 from fastapi import WebSocket
+
+from .config import REDIS_URL
 
 logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
     def __init__(self) -> None:
-        # submission_id (int) or run_id (str) → set of WebSocket connections
-        self._active: DefaultDict[Union[int, str], Set[WebSocket]] = defaultdict(set)
+        self._active: DefaultDict[str, Set[WebSocket]] = defaultdict(set)
+        self.redis = None
+        self.pubsub = None
+        self._listener_task = None
+
+    async def startup(self):
+        self.redis = redis.from_url(REDIS_URL, decode_responses=True)
+        self.pubsub = self.redis.pubsub()
+        self._listener_task = asyncio.create_task(self._listen_to_redis())
+
+    async def shutdown(self):
+        if self._listener_task:
+            self._listener_task.cancel()
+        if self.pubsub:
+            await self.pubsub.close()
+        if self.redis:
+            await self.redis.close()
+
+    async def _listen_to_redis(self):
+        try:
+            await self.pubsub.subscribe("dummy_channel")
+
+            async for message in self.pubsub.listen():
+                if message["type"] == "message":
+                    channel = message["channel"]
+                    data = message["data"]
+                    
+                    sockets = list(self._active.get(channel, []))
+                    if not sockets:
+                        continue
+                    
+                    for ws in sockets:
+                        try:
+                            await ws.send_text(data)
+                            await ws.close()
+                        except Exception:
+                            logger.debug("Failed to send WS message to one client for id %s", channel)
+                    
+                    self._active.pop(channel, None)
+                    await self.pubsub.unsubscribe(channel)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error("Redis listener task failed: %s", e)
 
     async def connect(self, submission_id: Union[int, str], ws: WebSocket) -> None:
         await ws.accept()
-        self._active[submission_id].add(ws)
-        logger.info("WS connected for id %s (total=%d)", submission_id, len(self._active[submission_id]))
+        channel = str(submission_id)
+        
+        if not self._active[channel]:
+            if self.pubsub:
+                await self.pubsub.subscribe(channel)
+
+        self._active[channel].add(ws)
+        logger.info("WS connected for id %s (total=%d)", channel, len(self._active[channel]))
 
     def disconnect(self, submission_id: Union[int, str], ws: WebSocket) -> None:
-        self._active[submission_id].discard(ws)
-        if not self._active[submission_id]:
-            del self._active[submission_id]
-        logger.info("WS disconnected for id %s", submission_id)
+        channel = str(submission_id)
+        if channel in self._active:
+            self._active[channel].discard(ws)
+            if not self._active[channel]:
+                del self._active[channel]
+                if self.pubsub:
+                    asyncio.create_task(self.pubsub.unsubscribe(channel))
+        logger.info("WS disconnected for id %s", channel)
 
     async def broadcast(self, submission_id: Union[int, str], data: dict) -> None:
-        """
-        Push `data` as JSON to every WebSocket subscribed to this ID,
-        then close each connection. Errors on individual sockets are swallowed
-        so one bad client can't block others.
-        """
-        sockets = list(self._active.get(submission_id, []))
-        if not sockets:
-            return
-
+        channel = str(submission_id)
         message = json.dumps(data)
-        for ws in sockets:
-            try:
-                await ws.send_text(message)
-                await ws.close()
-            except Exception:
-                logger.debug("Failed to send WS message to one client for id %s", submission_id)
+        if self.redis:
+            await self.redis.publish(channel, message)
+        else:
+            sockets = list(self._active.get(channel, []))
+            for ws in sockets:
+                try:
+                    await ws.send_text(message)
+                    await ws.close()
+                except Exception:
+                    pass
+            self._active.pop(channel, None)
 
-        # Clean up
-        self._active.pop(submission_id, None)
 
-
-# Singleton — imported by routes.py
+# Singleton
 manager = ConnectionManager()

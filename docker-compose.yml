@@ -83,6 +83,17 @@ services:
       <<: *hc
       test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
 
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: yc-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      <<: *hc
+      test: [ "CMD", "redis-cli", "ping" ]
+
   # ── FastAPI Backend ────────────────────────────────────────────────────────
   backend:
     build:
@@ -100,6 +111,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       MINIO_SECURE: "false"
       INTERNAL_API_URL: "http://backend:9000"
+      REDIS_URL: "redis://redis:6379/0"
       JWT_SECRET: ${JWT_SECRET:-changeme_in_production_please}
       JWT_ALGORITHM: HS256
       JWT_EXPIRE_MINUTES: "60"
@@ -109,6 +121,8 @@ services:
       rabbitmq:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     # Expose internally only; Nginx proxies to it
     expose:

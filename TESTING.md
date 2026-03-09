@@ -31,7 +31,7 @@ python3 -m pytest tests/ -v -s
 
 | File | What it tests |
 |------|---------------|
-| `test_judger_core.py` | `run_judger` and `custom_run` orchestration: AC, WA, CE, TLE, RE, SYSTEM_ERROR verdicts. Mocks Docker layer. **Now asserts return type is `dict` with `verdict`, `execution_time_ms`, `peak_memory_mb` keys.** |
+| `test_judger_core.py` | `run_judger` and `custom_run` orchestration: AC, WA, CE, TLE, RE, SYSTEM_ERROR verdicts. Mocks Docker layer. **Now asserts return type is `dict` with `verdict`, `execution_time_ms`, `peak_memory_mb` keys.** Pulls execution metrics directly from the `isolate` sandboxing `meta.txt` log instead of `container.stats`. |
 | `test_judger_compare.py` | `compare_outputs` whitespace-insensitive judge comparison |
 | `test_judger_file_utils.py` | In-memory POSIX tar streaming (`put_archive` / `get_archive`) used for container I/O |
 | `test_judger_result_mapper.py` | Exit code → verdict mapping (e.g. `137 → MLE`, `143 → TLE`) |
@@ -59,7 +59,7 @@ python3 -m pytest tests/ -v -s
 | File | What it tests | Why it exists |
 |------|---------------|---------------|
 | `test_regression_queue_names.py` | Workers import `SUBMIT_QUEUE`/`RUN_QUEUE` from `server.config`, not hardcoded strings | Bug: hardcoded names caused silent routing mismatches |
-| `test_regression_async_callback.py` | `send_callback` is a sync function using `httpx.Client`; `asyncio.run()` is never called inside pika callbacks. **Updated: `run_judger` mock returns dict.** | Bug: `asyncio.run()` inside pika callback raises `RuntimeError: loop already running` |
+| `test_regression_async_callback.py` | `send_callback` is a sync function using `httpx.Client`; `asyncio.run()` is never called inside pika callbacks. **Updated: `run_judger` and `custom_run` mocks return dict.** | Bug: `asyncio.run()` inside pika callback raises `RuntimeError: loop already running` |
 
 ## Mocking Strategy
 
@@ -72,8 +72,8 @@ Tests that exercise FastAPI routes use `sqlite+aiosqlite:///:memory:` injected v
 ### Docker / judger
 `test_judger_core.py` mocks `DockerManager`, `put_files_to_container`, `extract_file_from_container`, and `language_instance.run()` / `.compile()` at the call site. No Docker daemon is needed.
 
-### run_judger return type
-`run_judger` now returns a **dict** (not a string). Any test that mocks `judger.run_judger` must return:
+### run_judger & custom_run return type
+`run_judger` and `custom_run` now return a **dict** (not a string). Any test that mocks `judger.run_judger` or `judger.custom_run` must return:
 ```python
 {"verdict": "AC", "execution_time_ms": 50.0, "peak_memory_mb": 12.0}
 ```
@@ -97,7 +97,7 @@ Tests that exercise FastAPI routes use `sqlite+aiosqlite:///:memory:` injected v
 1. Create `tests/test_<component>.py`
 2. Use `@pytest.mark.asyncio` for any `async` test functions
 3. If importing worker modules, use the `_fresh_import()` helper (see `test_regression_async_callback.py`) to avoid pika patching issues
-4. If mocking `run_judger`, always return a dict:
+4. If mocking `run_judger` or `custom_run`, always return a dict:
    ```python
    mock_judger.run_judger.return_value = {
        "verdict": "AC",

@@ -10,8 +10,12 @@ from .admin import router as admin_router
 async def lifespan(app: FastAPI):
     # Startup
     await mq.connect()
+    from .ws import manager as ws_manager
+    await ws_manager.startup()
     yield
     # Shutdown
+    from .ws import manager as ws_manager
+    await ws_manager.shutdown()
     await mq.close()
 
 app = FastAPI(lifespan=lifespan)

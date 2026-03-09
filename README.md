@@ -6,6 +6,7 @@ A full-stack competitive programming platform built with **React**, **FastAPI**,
 ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat-square&logo=fastapi)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169e1?style=flat-square&logo=postgresql&logoColor=white)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=flat-square&logo=rabbitmq&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-DC382D?style=flat-square&logo=redis&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![Nginx](https://img.shields.io/badge/Nginx-009639?style=flat-square&logo=nginx&logoColor=white)
 
@@ -20,7 +21,11 @@ Browser
 Nginx (port 80)
   ├── /api/*  ──────► FastAPI (port 9000)  ──► PostgreSQL
   ├── /ws/*   ──────► FastAPI WebSocket        ▲
-  └── /*      ──────► Vite SPA (React)    RabbitMQ
+  │                     │                      │
+  │                     ▼                   RabbitMQ
+  │            [ Redis Pub/Sub ]               │
+  │                     ▲                      │
+  └── /*      ──────► Vite SPA (React)         │
                                                │
                                     ┌──────────┴──────────┐
                                submit_worker         run_worker
@@ -35,10 +40,10 @@ Nginx (port 80)
 ### Request lifecycle (Code Submission)
 1. Browser POSTs to `/api/submit` → JWT authenticated
 2. FastAPI writes a `PENDING` submission to PostgreSQL, enqueues a job on RabbitMQ
-3. **`submit_worker`** dequeues the job, runs it inside an ephemeral Docker container (compile + judge across all test cases), collects real execution time (perf_counter) and peak memory (Docker cgroups stats)
+3. **`submit_worker`** dequeues the job, runs it inside an ephemeral Docker container (with strict Isolate sandboxing), collects exact real execution time and peak memory (`max-rss`) from `meta.txt`
 4. Worker POSTs the verdict + stats to `/api/webhook/submit/{id}`
-5. Webhook stores the result in PostgreSQL and broadcasts via **WebSocket** to any connected browser tab
-6. The browser receives the result pushed in real-time (no polling)
+5. Webhook stores the result in PostgreSQL and broadcasts the JSON onto a centralized **Redis Pub/Sub** network.
+6. The exact FastAPI instance holding the user's **WebSocket** receives the Redis broadcast and pushes it in real-time (no polling)
 
 ---
 
@@ -46,8 +51,8 @@ Nginx (port 80)
 
 | Area | Details |
 |------|---------|
-| **Judge** | AC / WA / TLE / MLE / CE / RE — real resource stats from Docker cgroups |
-| **Real-time** | WebSocket push from webhook → browser (polling fallback for reliability) |
+| **Judge** | AC / WA / TLE / MLE / CE / RE — exact resource stats driven by `isolate` sandbox |
+| **Real-time** | WebSocket push from Webhook → Redis Backplane → browser (polling fallback for reliability) |
 | **Languages** | Python 3, C++ |
 | **Admin Panel** | Problem CRUD, test case management, dry-run per test case, contest CRUD |
 | **Auth** | JWT-based register/login; `is_admin` flag for admin routes |
@@ -72,6 +77,7 @@ docker compose up --build
 # API docs  →  http://localhost/api/docs
 # RabbitMQ  →  http://localhost:15672   (guest / guest)
 # MinIO     →  http://localhost:9001    (minioadmin / minioadmin)
+# Redis     →  Listening on port 6379
 ```
 
 > **First run**: Alembic migrations run automatically before the API server starts.
@@ -95,6 +101,7 @@ Then visit **http://localhost/admin/problems**.
 - Node 20+
 - PostgreSQL 15+
 - RabbitMQ 3.13+
+- Redis 7+
 - MinIO (or any S3-compatible bucket)
 - Docker daemon (the judger spawns containers)
 
@@ -108,6 +115,7 @@ pip install python-jose[cryptography] python-multipart minio
 # Set environment variables (or create a .env for your shell)
 export DATABASE_URL="postgresql+asyncpg://judge:judge@localhost:5432/judge"
 export RABBITMQ_HOST=localhost
+export REDIS_URL="redis://localhost:6379/0"
 export MINIO_ENDPOINT=localhost:9005
 export JWT_SECRET=dev_secret
 
@@ -149,7 +157,7 @@ VITE_API_URL=http://127.0.0.1:9000
 | `frontend/nginx.conf` | SPA fallback, `/api/*` proxy, `/ws/*` WebSocket upgrade |
 | `backend/Dockerfile` | Python 3.12-slim; runs `alembic upgrade head` then `uvicorn` |
 | `backend/Dockerfile.worker` | Two build targets: `submit_worker` and `run_worker`; mounts Docker socket |
-| `docker-compose.yml` | Orchestrates all 7 services with health-checks and dependency ordering |
+| `docker-compose.yml` | Orchestrates all 8 services with health-checks and dependency ordering (includes Redis) |
 | `.env.example` | Template for required environment variables |
 
 ---
