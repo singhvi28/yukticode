@@ -1,5 +1,10 @@
+import os
+
 # RabbitMQ connection parameters
 RABBITMQ_HOST = 'localhost'
+
+# Internal API URL for workers to reach the backend
+INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://127.0.0.1:9000")
 
 RUN_EXCHANGE = 'run_exchange'
 SUBMIT_EXCHANGE = 'submit_exchange'

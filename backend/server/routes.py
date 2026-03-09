@@ -5,7 +5,7 @@ from typing import List
 
 from .models import SubmitRequest, RunRequest
 from .messaging import RabbitMQClient
-from .config import SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, RUN_EXCHANGE, RUN_ROUTING_KEY
+from .config import SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, RUN_EXCHANGE, RUN_ROUTING_KEY, INTERNAL_API_URL
 from .ws import manager as ws_manager
 
 from server.db.database import get_db_session
@@ -65,7 +65,7 @@ async def submit(submit_request: SubmitRequest, current_user: User = Depends(get
         } for tc in test_cases]
 
     # 4. Enqueue task for worker
-    callback_url = f"http://127.0.0.1:9000/webhook/submit/{new_submission.id}"
+    callback_url = f"{INTERNAL_API_URL}/webhook/submit/{new_submission.id}"
     
     payload = {
         "language": submit_request.language,
@@ -143,12 +143,7 @@ async def run(run_request: RunRequest, request: Request):
     run_id = str(uuid.uuid4())
     
     # Construct the absolute internal callback URL for the worker to hit
-    base_url = str(request.base_url).rstrip("/")
-    if "api" in request.url.path:
-        # Standardize for Nginx/Docker environments
-        callback_url = f"{base_url}/api/webhook/run/{run_id}"
-    else:
-        callback_url = f"{base_url}/webhook/run/{run_id}"
+    callback_url = f"{INTERNAL_API_URL}/webhook/run/{run_id}"
         
     run_payload = run_request.model_dump()
     run_payload['callback_url'] = callback_url

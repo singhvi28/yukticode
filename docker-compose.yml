@@ -99,6 +99,7 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       MINIO_SECURE: "false"
+      INTERNAL_API_URL: "http://backend:9000"
       JWT_SECRET: ${JWT_SECRET:-changeme_in_production_please}
       JWT_ALGORITHM: HS256
       JWT_EXPIRE_MINUTES: "60"
