@@ -220,6 +220,14 @@ python3 -m pytest tests/test_regression_queue_names.py \
                   tests/test_worker_callback.py -v
 ```
 
+### End-to-End Testing
+
+```bash
+cd e2e_tests
+# Complete integration test against a live backend/worker environment
+python3 e2e_api_test2.py
+```
+
 ---
 
 ## Project Structure
@@ -246,9 +254,8 @@ cf-clone/
 │   │       ├── database.py  # Async session factory
 │   │       └── alembic/     # Migration scripts
 │   ├── worker/
-│   │   ├── submit_worker.py
+│   │   ├── submit_worker.py # Async aio_pika worker
 │   │   ├── run_worker.py
-│   │   ├── messaging.py     # Sync RabbitMQ consumer
 │   │   └── Judger/
 │   │       ├── judger.py       # run_judger, custom_run (returns stats dict)
 │   │       ├── docker_manager.py
@@ -256,6 +263,10 @@ cf-clone/
 │   │       ├── result_mapper.py
 │   │       └── languages/
 │   └── tests/               # See TESTING.md
+├── e2e_tests/               # End-to-end API tests
+│   ├── e2e_api_test2.py
+│   ├── e2e_api_test.py
+│   └── e2e_test.py
 └── frontend/
     ├── Dockerfile
     ├── nginx.conf

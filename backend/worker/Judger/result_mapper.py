@@ -11,6 +11,7 @@ def map_exit_code(exit_code: int) -> str:
     return {
         0:   "AC",
         1:   "RE",
+        2:   "RE",
         143: "TLE",
         137: "MLE",
     }.get(exit_code, "UNKNOWN")

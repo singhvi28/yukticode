@@ -26,7 +26,8 @@ class BaseLanguage(ABC):
         """Abstract method to run the compiled code."""
         pass
 
-    def run_with_isolate(self, process_cmd: str, time_limit: int, memory_limit: int):
+    def run_with_isolate(self, process_cmd: str, time_limit: int, memory_limit: int,
+                         use_mem_limit: bool = True, max_processes: int = 1):
         """
         Executes `process_cmd` securely inside Isolate's sandbox. It handles:
         1. isolate --init (creating the box)
@@ -41,11 +42,17 @@ class BaseLanguage(ABC):
             TLEException: if execution exceeds time_limit.
         """
         # 1. Initialize Isolate Box
+        # We create the basic run folder to prevent Isolate's internal checks from crashing,
+        # but we skip all cgroups v2 hacking.
+        self.container.exec_run('sh -c "mkdir -p /run/isolate && touch /run/isolate/cgroup"')
+        
+        # Notice we removed --cg here
         exit_code, output = self.container.exec_run("isolate --init")
         if exit_code != 0:
             raise Exception(f"Failed to initialize isolate: {output.decode('utf-8')}")
         
-        box_dir = output.decode('utf-8').strip()
+        # Ensure we use Isolate's internal 'box' subdirectory!
+        box_dir = output.decode('utf-8').strip() + "/box"
 
         # 2. Prepare Sandbox environment (copy files from /workspace to the box)
         self.container.exec_run(f"/bin/sh -c 'cp -r /workspace/* {box_dir}/'")
@@ -55,13 +62,26 @@ class BaseLanguage(ABC):
         # Memory limit is passed in KB (Docker had MB). Isolate ensures tight bounds.
         memory_limit_kb = memory_limit * 1024
         
-        # We redirect stdin and stdout within the isolate environment.
-        # --meta captures the execution statistics.
+        # Build the --mem flag only for non-JVM languages.
+        # The JVM maps huge virtual address space for JIT/GC, which --mem blocks.
+        mem_flag = f"--mem={memory_limit_kb} " if use_mem_limit else ""
+        
+        # --processes controls how many threads/processes the sandboxed program can spawn.
+        # Default is 1 (single-process). Java needs 0 (unlimited) for GC/JIT threads.
+        proc_flag = f"--processes={max_processes} " if max_processes != 1 else ""
+        
+        # Convert time_limit from ms to seconds
+        time_limit_sec = time_limit / 1000.0
+        wall_time_sec = time_limit_sec + 1.0
+
         isolate_cmd = (
-            f"/bin/sh -c 'isolate --cg -M /workspace/meta.txt "
-            f"--time={time_limit} --wall-time={time_limit + 1} "
-            f"--mem={memory_limit_kb} "
-            f"--run -- {process_cmd} < {box_dir}/input.txt > {box_dir}/actual_op.txt'"
+            f"isolate -M /workspace/meta.txt "
+            f"--dir=/usr --dir=/bin --dir=/lib --dir=/lib64 --dir=/etc "
+            f"--env=PATH=/usr/bin:/bin "
+            f"--time={time_limit_sec} --wall-time={wall_time_sec} "
+            f"{mem_flag}{proc_flag}"
+            f"--stdin=input.txt --stdout=actual_op.txt "
+            f"--run -- {process_cmd}"
         )
 
         result = {}
@@ -69,16 +89,17 @@ class BaseLanguage(ABC):
             ec, out = self.container.exec_run(isolate_cmd)
             result['exit_code'] = ec
             result['output'] = out.decode('utf-8') if out else ''
+            print(f"DEBUG ISOLATE: ec={ec}, out={result['output']}")
 
         # Use daemon thread to enforce hard timeout just in case isolate hangs entirely 
         # (though isolate itself has wall-time bounds).
         thread = threading.Thread(target=_run, daemon=True)
         thread.start()
-        thread.join(timeout=time_limit + 2)
+        thread.join(timeout=time_limit_sec + 2.0)
 
         if thread.is_alive():
             self._cleanup_isolate()
-            raise TLEException(f"Execution exceeded time limit of {time_limit}s")
+            raise TLEException(f"Execution exceeded time limit of {time_limit_sec}s")
 
         # 4. Read meta file to determine if TLE occurred gracefully from Isolate
         # and extract actual resource usage.
@@ -123,4 +144,5 @@ class BaseLanguage(ABC):
         return result['exit_code'], result['output'], execution_time_ms, peak_memory_mb
 
     def _cleanup_isolate(self):
+        # Ensure cleanup also drops the --cg flag
         self.container.exec_run("isolate --cleanup")

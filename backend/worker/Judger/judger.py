@@ -9,6 +9,7 @@ from .result_mapper import map_exit_code
 from .languages.base import TLEException
 from .languages.cpp import CppLanguage
 from .languages.python import PythonLanguage
+from .languages.java import JavaLanguage
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ def check_forbidden_patterns(language: str, src_code: str) -> None:
         forbidden_patterns = [
             "<cstdlib>", "system(", "popen(", "fork(", "exec(", "clone("
         ]
+    elif language == "java":
+        forbidden_patterns = [
+            "Runtime.getRuntime().exec", "ProcessBuilder", "System.exit"
+        ]
 
     for pattern in forbidden_patterns:
         if pattern in src_code:
@@ -52,6 +57,8 @@ def get_language_instance(language, container, time_limit, memory_limit):
         return CppLanguage(container, time_limit, memory_limit)
     elif language == "py":
         return PythonLanguage(container, time_limit, memory_limit)
+    elif language == "java":
+        return JavaLanguage(container, time_limit, memory_limit)
     else:
         raise ValueError(f"Unsupported language: {language!r}")
 
@@ -132,7 +139,7 @@ def run_judger(language, time_limit, memory_limit,
                 elapsed_ms = isolate_time if isolate_time > 0 else (time.perf_counter() - t_start) * 1000.0
             except TLEException as e:
                 logger.warning("[%s] Time limit exceeded on test case %d", submission_id, i+1)
-                total_time_ms += time_limit * 1000.0  # charge full TL
+                total_time_ms += float(time_limit)  # charge full TL
                 peak_memory_mb = max(peak_memory_mb, getattr(e, "peak_memory_mb", 0.0))
                 try:
                     container.stop(timeout=2)

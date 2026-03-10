@@ -26,9 +26,11 @@ class DockerManager:
         try:
             image = self.client.images.get(self.image_name)
         except docker.errors.ImageNotFound:
-            print(f" [*] Image {self.image_name} not found. Building...")
+            import os
+            dockerfile_path = os.path.join(os.path.dirname(__file__), "judger_dockerfile")
+            print(f" [*] Image {self.image_name} not found. Building... at {dockerfile_path}")
             image, logs = self.client.images.build(
-                path="./judger_dockerfile/", tag=self.image_name, forcerm=True
+                path=dockerfile_path, tag=self.image_name, forcerm=True
             )
 
         container = self.client.containers.run(
@@ -38,7 +40,7 @@ class DockerManager:
             tty=True, # Critical to keep it alive while injecting archives
             mem_limit=f'{self.memory_limit}m',
             network_disabled=True,
-            cap_add=["SYS_ADMIN"],                # Required for Isolate namespaces
+            cap_add=["SYS_ADMIN", "NET_ADMIN"],   # Required for Isolate namespaces
             security_opt=["apparmor=unconfined"], # Required for Isolate bind mounts
             stderr=True,
             stdout=True,

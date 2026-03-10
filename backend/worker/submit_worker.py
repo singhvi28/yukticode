@@ -1,15 +1,16 @@
 import sys
 import os
+import asyncio
+import logging
+import msgpack
+import httpx
+import aio_pika
+
 # Ensure server package is importable for shared config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-import logging
-import time
-import msgpack
-import httpx
 from Judger import judger
-from messaging import RabbitMQConsumer
-from server.config import SUBMIT_QUEUE
+from server.config import SUBMIT_QUEUE, DLX_EXCHANGE, DLX_SUBMIT_QUEUE
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,75 +22,99 @@ RABBITMQ_HOST = 'localhost'
 CALLBACK_TIMEOUT = 10      # seconds per attempt
 MAX_RETRIES = 3
 
-
-def send_callback(url: str, payload: dict, max_retries: int = MAX_RETRIES):
+async def send_callback(url: str, payload: dict, max_retries: int = MAX_RETRIES):
     """
-    POST the judging result to the callback URL using httpx (synchronous).
-    Retries up to max_retries times with exponential backoff.
-    Raises httpx.HTTPError on final failure.
+    POST the judging result to the callback URL asynchronously using httpx.
     """
     for attempt in range(1, max_retries + 1):
         try:
-            with httpx.Client(timeout=CALLBACK_TIMEOUT) as client:
-                resp = client.post(url, json=payload, headers={'Content-Type': 'application/json'})
+            async with httpx.AsyncClient(timeout=CALLBACK_TIMEOUT) as client:
+                resp = await client.post(url, json=payload, headers={'Content-Type': 'application/json'})
                 resp.raise_for_status()
             logger.info("Callback delivered to %s (attempt %d)", url, attempt)
             return
         except (httpx.TimeoutException, httpx.ConnectError) as exc:
             logger.warning("Callback attempt %d/%d failed: %s", attempt, max_retries, exc)
             if attempt < max_retries:
-                time.sleep(2 ** (attempt - 1))
+                await asyncio.sleep(2 ** (attempt - 1))
             else:
                 raise
 
+async def submit_callback(message: aio_pika.abc.AbstractIncomingMessage):
+    async with message.process(requeue=False):
+        data = msgpack.unpackb(message.body)
 
-def submit_callback(ch, method, properties, body):
-    data = msgpack.unpackb(body)
+        language = data["language"]
+        time_limit = data["time_limit"]
+        memory_limit = data["memory_limit"]
+        src_code = data["src_code"]
+        test_cases = data.get("test_cases", [])
+        callback_url = data["callback_url"]
 
-    language = data["language"]
-    time_limit = data["time_limit"]
-    memory_limit = data["memory_limit"]
-    src_code = data["src_code"]
-    test_cases = data.get("test_cases", [])
-    callback_url = data["callback_url"]
+        logger.info("Submit worker processing: language=%s, cases=%s, callback=%s", language, len(test_cases), callback_url)
 
-    logger.info("Submit worker processing: language=%s, cases=%s, callback=%s", language, len(test_cases), callback_url)
+        try:
+            # 🐛 FIX: Run the blocking judger logic in a thread pool executor.
+            # This prevents TLE/long-running code from blocking the async event loop,
+            # allowing RabbitMQ heartbeats to continue firing in the background.
+            loop = asyncio.get_running_loop()
+            judge_result = await loop.run_in_executor(
+                None, 
+                lambda: judger.run_judger(
+                    language=language,
+                    time_limit=time_limit,
+                    memory_limit=memory_limit,
+                    src_code=src_code,
+                    test_cases=test_cases,
+                )
+            )
+        except Exception:
+            logger.exception("Unexpected exception from run_judger — defaulting to SYSTEM_ERROR")
+            judge_result = {"verdict": "SYSTEM_ERROR", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
 
-    try:
-        judge_result = judger.run_judger(
-            language=language,
-            time_limit=time_limit,
-            memory_limit=memory_limit,
-            src_code=src_code,
-            test_cases=test_cases,
+        verdict = judge_result.get("verdict", "SYSTEM_ERROR")
+        execution_time_ms = judge_result.get("execution_time_ms", 0.0)
+        peak_memory_mb = judge_result.get("peak_memory_mb", 0.0)
+
+        logger.info("Verdict: %s (%.1fms, %.1fMB) — sending callback to %s",
+                    verdict, execution_time_ms, peak_memory_mb, callback_url)
+
+        try:
+            await send_callback(callback_url, {
+                "status": verdict,
+                "execution_time_ms": execution_time_ms,
+                "peak_memory_mb": peak_memory_mb,
+            })
+        except Exception:
+            logger.exception(
+                "Callback permanently failed after %d retries for %s — sending to DLX",
+                MAX_RETRIES, callback_url,
+            )
+            raise
+
+async def main():
+    logger.info(f"Connecting to RabbitMQ at {RABBITMQ_HOST}...")
+    connection = await aio_pika.connect_robust(f"amqp://{RABBITMQ_HOST}/")
+    
+    async with connection:
+        channel = await connection.channel()
+        # Prefetch count ensures we don't pull all messages at once
+        await channel.set_qos(prefetch_count=1)
+        
+        queue = await channel.declare_queue(
+            SUBMIT_QUEUE,
+            durable=False,
+            arguments={
+                'x-dead-letter-exchange': DLX_EXCHANGE,
+                'x-dead-letter-routing-key': DLX_SUBMIT_QUEUE,
+            }
         )
-    except Exception:
-        # run_judger is designed never to raise, but be defensive
-        logger.exception("Unexpected exception from run_judger — defaulting to SYSTEM_ERROR")
-        judge_result = {"verdict": "SYSTEM_ERROR", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
-
-    verdict = judge_result.get("verdict", "SYSTEM_ERROR")
-    execution_time_ms = judge_result.get("execution_time_ms", 0.0)
-    peak_memory_mb = judge_result.get("peak_memory_mb", 0.0)
-
-    logger.info("Verdict: %s (%.1fms, %.1fMB) — sending callback to %s",
-                verdict, execution_time_ms, peak_memory_mb, callback_url)
-
-    try:
-        send_callback(callback_url, {
-            "status": verdict,
-            "execution_time_ms": execution_time_ms,
-            "peak_memory_mb": peak_memory_mb,
-        })
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-    except Exception:
-        logger.exception(
-            "Callback permanently failed after %d retries for %s — sending to DLX",
-            MAX_RETRIES, callback_url,
-        )
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-
+        logger.info(f"Worker listening on queue: {SUBMIT_QUEUE}")
+        
+        await queue.consume(submit_callback)
+        
+        # Keep the event loop running
+        await asyncio.Future()
 
 if __name__ == "__main__":
-    consumer = RabbitMQConsumer(host=RABBITMQ_HOST, queue=SUBMIT_QUEUE, callback=submit_callback)
-    consumer.start()
+    asyncio.run(main())

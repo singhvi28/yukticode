@@ -29,5 +29,5 @@ class PythonLanguage(BaseLanguage):
         """
         # Isolate runs in its own root, the workspace files are mapped into the current 
         # working directory of Isolate (the box directory).
-        run_cmd = "python3 main.py"
+        run_cmd = "/usr/bin/python3 main.py"
         return self.run_with_isolate(run_cmd, self.time_limit, self.memory_limit)
