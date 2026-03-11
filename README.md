@@ -73,6 +73,9 @@ cp .env.example .env
 # 2. Build and start all services
 docker compose up --build
 
+# 3. Seed the database and blob storage with problems
+docker compose exec backend python3 seed.py
+
 # frontend  →  http://localhost
 # API docs  →  http://localhost/api/docs
 # RabbitMQ  →  http://localhost:15672   (guest / guest)
@@ -80,8 +83,8 @@ docker compose up --build
 # Redis     →  Listening on port 6379
 ```
 
-> **First run**: Alembic migrations run automatically before the API server starts.
-> The judger image is built on first job submission (cached afterwards).
+> **First run**: Alembic migrations run automatically before the API server starts. 
+> The judger image is built on the first job submission (cached afterwards).
 
 ### Make yourself an admin
 
@@ -121,6 +124,9 @@ export JWT_SECRET=dev_secret
 
 # Run migrations
 python3 -m alembic upgrade head
+
+# Seed the database and blob storage (only needed once)
+python3 seed.py
 
 # Start API server
 uvicorn server.main:app --host 127.0.0.1 --port 9000 --reload
@@ -247,15 +253,14 @@ cf-clone/
 │   │   ├── admin.py         # Admin CRUD routes
 │   │   ├── ws.py            # WebSocket ConnectionManager
 │   │   ├── config.py        # Queue names, env vars
-│   │   ├── messaging.py     # RabbitMQ async client
 │   │   ├── blob_storage.py  # MinIO helpers
 │   │   └── db/
 │   │       ├── models.py    # SQLAlchemy ORM models
 │   │       ├── database.py  # Async session factory
 │   │       └── alembic/     # Migration scripts
 │   ├── worker/
-│   │   ├── submit_worker.py # Async aio_pika worker
-│   │   ├── run_worker.py
+│   │   ├── submit_worker.py # Async aio_pika worker for code submissions
+│   │   ├── run_worker.py    # Async aio_pika worker for custom runs
 │   │   └── Judger/
 │   │       ├── judger.py       # run_judger, custom_run (returns stats dict)
 │   │       ├── docker_manager.py
