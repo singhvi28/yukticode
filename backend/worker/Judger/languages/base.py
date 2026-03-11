@@ -80,7 +80,7 @@ class BaseLanguage(ABC):
             f"--env=PATH=/usr/bin:/bin "
             f"--time={time_limit_sec} --wall-time={wall_time_sec} "
             f"{mem_flag}{proc_flag}"
-            f"--stdin=input.txt --stdout=actual_op.txt "
+            f"--stdin=input.txt --stdout=actual_op.txt --stderr=error_log.txt "
             f"--run -- {process_cmd}"
         )
 
@@ -135,9 +135,17 @@ class BaseLanguage(ABC):
                 self._cleanup_isolate()
                 raise TLEException("Isolate reported Time Limit Exceeded", peak_memory_mb=peak_memory_mb)
 
-        # 5. Bring output back to /workspace/actual_op.txt so file_utils can get it
+        # 5. Bring output back to /workspace so file_utils can get it
         self.container.exec_run(f"/bin/sh -c 'cp {box_dir}/actual_op.txt /workspace/actual_op.txt'")
-        
+
+        # 6. Capture stderr for diagnostics on RE verdicts
+        self.container.exec_run(f"/bin/sh -c 'cp {box_dir}/error_log.txt /workspace/error_log.txt 2>/dev/null || true'")
+        if result.get('exit_code', 0) != 0:
+            _, stderr_out = self.container.exec_run("cat /workspace/error_log.txt")
+            stderr_str = stderr_out.decode('utf-8', errors='replace') if stderr_out else ''
+            if stderr_str.strip():
+                print(f"DEBUG ISOLATE STDERR: {stderr_str[:500]}")
+
         self._cleanup_isolate()
 
         # Isolate returns non-zero if the sandboxed process exits non-zero

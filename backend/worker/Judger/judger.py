@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 import uuid
 import logging
@@ -45,7 +46,7 @@ def check_forbidden_patterns(language: str, src_code: str) -> None:
         ]
 
     for pattern in forbidden_patterns:
-        if pattern in src_code:
+        if re.search(r'\b' + re.escape(pattern) + r'\b', src_code):
             raise SecurityViolationException(f"Forbidden pattern detected: {pattern}")
 
 
