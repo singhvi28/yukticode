@@ -19,7 +19,7 @@ from server.db.database import get_db_session
 from server.db.models import User, Problem, ProblemVersion, TestCase, Contest, ContestProblem, Submission
 from server.auth import get_current_user
 from server.blob_storage import upload_text
-from server.config import RUN_EXCHANGE, RUN_ROUTING_KEY, REDIS_URL
+from server.config import RUN_EXCHANGE, RUN_ROUTING_KEY, REDIS_URL, INTERNAL_API_URL
 from server.messaging import RabbitMQClient
 from server.ws import manager as ws_manager
 
@@ -359,7 +359,7 @@ async def admin_run_testcase(
 
     # Use a unique run_id so we can match the callback
     run_id = str(uuid.uuid4())
-    callback_url = f"http://backend:9000/admin/run-result/{run_id}"
+    callback_url = f"{INTERNAL_API_URL}/admin/run-result/{run_id}"
 
     # Enqueue via the existing /run endpoint (going through MQ → worker)
     run_payload = {
@@ -378,7 +378,7 @@ async def admin_run_testcase(
     }), ex=60)
 
     async with httpx.AsyncClient() as client:
-        await client.post("http://backend:9000/run", json=run_payload)
+        await client.post(f"{INTERNAL_API_URL}/run", json=run_payload)
 
     return {"run_id": run_id, "msg": "Run enqueued. Connect to WS /ws/runs/{run_id} for result."}
 

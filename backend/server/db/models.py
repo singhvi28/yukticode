@@ -42,6 +42,9 @@ class Problem(Base):
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     is_published = Column(Boolean, default=False)
+    
+    difficulty = Column(String(20), default="Medium")
+    tags = Column(String, default="[]")  # Stored as JSON string
 
     # Relationships
     author = relationship("User", back_populates="problems")

@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 from typing import List
+import json
 
 from .models import SubmitRequest, RunRequest, RunBatchRequest
 from .messaging import RabbitMQClient
-from .config import SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, RUN_EXCHANGE, RUN_ROUTING_KEY, INTERNAL_API_URL
+from .config import SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, RUN_EXCHANGE, RUN_ROUTING_KEY
 from .ws import manager as ws_manager
 
 from server.db.database import get_db_session
@@ -167,6 +169,7 @@ async def run_batch(batch_request: RunBatchRequest, request: Request):
     """
     batch_id = str(uuid.uuid4())
 
+    # Hardcoded internal URL bypasses Nginx to prevent path stripping issues
     callback_url = f"http://backend:9000/webhook/run/{batch_id}"
 
     payload = {
@@ -216,20 +219,38 @@ async def websocket_run(websocket: WebSocket, run_id: str):
         ws_manager.disconnect(run_id, websocket)
 @router.get('/problems')
 async def list_problems(db: AsyncSession = Depends(get_db_session)):
-    stmt = select(Problem).where(Problem.is_published == True)
+    stmt = (
+        select(
+            Problem,
+            func.count(Submission.id).filter(Submission.status == 'AC').label('ac_count'),
+            func.count(Submission.id).label('total_count')
+        )
+        .outerjoin(ProblemVersion, ProblemVersion.problem_id == Problem.id)
+        .outerjoin(Submission, Submission.problem_version_id == ProblemVersion.id)
+        .where(Problem.is_published == True)
+        .group_by(Problem.id)
+        .order_by(Problem.id)
+    )
     result = await db.execute(stmt)
-    problems = result.scalars().all()
+    rows = result.all()
     
-    return [
-        {
-            "id": p.id,
-            "title": p.title,
-            "difficulty": "Medium", # Mock data
-            "acceptance": 45.2,     # Mock data
-            "tags": ["Array", "Algorithm"]
-        }
-        for p in problems
-    ]
+    problems_data = []
+    for problem, ac_count, total_count in rows:
+        acceptance = (ac_count / total_count * 100) if total_count > 0 else 0.0
+        try:
+            tags = json.loads(problem.tags) if problem.tags else []
+        except:
+            tags = []
+
+        problems_data.append({
+            "id": problem.id,
+            "title": problem.title,
+            "difficulty": problem.difficulty or "Medium",
+            "acceptance": round(acceptance, 1),
+            "tags": tags
+        })
+        
+    return problems_data
 
 @router.get('/problems/{problem_id}')
 async def get_problem(problem_id: int, db: AsyncSession = Depends(get_db_session)):
