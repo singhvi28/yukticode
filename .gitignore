@@ -52,3 +52,6 @@ package-lock.json
 .DS_Store
 *.log
 /tmp/
+
+# MinIO
+minio
