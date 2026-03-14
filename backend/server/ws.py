@@ -91,9 +91,29 @@ class ConnectionManager:
                     asyncio.create_task(self.pubsub.unsubscribe(channel))
         logger.info("WS disconnected for id %s", channel)
 
+    async def cache_result(self, submission_id: Union[int, str], data: dict) -> None:
+        """Store the verdict in Redis with a 60-second TTL so late WebSocket
+        connections can still pick it up (fixes the race condition)."""
+        if self.redis:
+            key = f"result:{submission_id}"
+            await self.redis.set(key, json.dumps(data), ex=60)
+
+    async def get_cached_result(self, submission_id: Union[int, str]) -> dict | None:
+        """Return the cached verdict for *submission_id*, or None."""
+        if self.redis:
+            key = f"result:{submission_id}"
+            raw = await self.redis.get(key)
+            if raw:
+                return json.loads(raw)
+        return None
+
     async def broadcast(self, submission_id: Union[int, str], data: dict) -> None:
         channel = str(submission_id)
         message = json.dumps(data)
+
+        # Cache first — ensures late WebSocket connections can still read the result
+        await self.cache_result(submission_id, data)
+
         if self.redis:
             await self.redis.publish(channel, message)
         else:

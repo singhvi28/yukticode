@@ -65,7 +65,8 @@ async def submit(submit_request: SubmitRequest, current_user: User = Depends(get
         } for tc in test_cases]
 
     # 4. Enqueue task for worker
-    callback_url = f"{INTERNAL_API_URL}/webhook/submit/{new_submission.id}"
+    # Hardcoded internal URL bypasses Nginx to prevent path stripping issues
+    callback_url = f"http://backend:9000/api/webhook/submit/{new_submission.id}"
     
     payload = {
         "language": submit_request.language,
@@ -88,15 +89,21 @@ async def submit(submit_request: SubmitRequest, current_user: User = Depends(get
 async def ws_submission_status(submission_id: int, websocket: WebSocket):
     """
     Push-based alternative to polling /submissions/{id}.
-    The client connects here and waits; when the webhook fires, it receives
-    a single JSON message:
-      { "status": "AC", "execution_time_ms": 134.5, "peak_memory_mb": 18.2 }
-    and the server closes the socket.
+    After connecting, we first check Redis for a cached result (race-condition
+    fix). If the worker already finished, the client gets the result
+    immediately and the socket closes.
     """
     await ws_manager.connect(submission_id, websocket)
     try:
-        # Keep connection alive by reading (client should not send anything,
-        # but we must await to detect disconnects)
+        # Check if the result is already cached (worker beat us)
+        cached = await ws_manager.get_cached_result(submission_id)
+        if cached:
+            import json
+            await websocket.send_text(json.dumps(cached))
+            await websocket.close()
+            return
+
+        # Otherwise wait for the broadcast
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
@@ -145,7 +152,8 @@ async def run(run_request: RunRequest, request: Request):
     run_id = str(uuid.uuid4())
     
     # Construct the absolute internal callback URL for the worker to hit
-    callback_url = f"{INTERNAL_API_URL}/webhook/run/{run_id}"
+    # Hardcoded internal URL bypasses Nginx to prevent path stripping issues
+    callback_url = f"http://backend:9000/api/webhook/run/{run_id}"
         
     run_payload = run_request.model_dump()
     run_payload['callback_url'] = callback_url
@@ -166,10 +174,19 @@ async def webhook_run(run_id: str, payload: dict = Body(...)):
 async def websocket_run(websocket: WebSocket, run_id: str):
     """
     Clients connect here after calling POST /run to receive real-time execution results.
+    Checks Redis cache first in case the worker already finished.
     """
     await ws_manager.connect(run_id, websocket)
     try:
-        # Keep connection open until the broadcast closes it or client disconnects
+        # Check if the result is already cached (worker beat us)
+        cached = await ws_manager.get_cached_result(run_id)
+        if cached:
+            import json
+            await websocket.send_text(json.dumps(cached))
+            await websocket.close()
+            return
+
+        # Otherwise wait for the broadcast
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:

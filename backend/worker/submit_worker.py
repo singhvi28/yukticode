@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-RABBITMQ_HOST = 'localhost'
+RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 CALLBACK_TIMEOUT = 10      # seconds per attempt
 MAX_RETRIES = 3
 
@@ -79,18 +79,25 @@ async def submit_callback(message: aio_pika.abc.AbstractIncomingMessage):
         logger.info("Verdict: %s (%.1fms, %.1fMB) — sending callback to %s",
                     verdict, execution_time_ms, peak_memory_mb, callback_url)
 
-        try:
-            await send_callback(callback_url, {
-                "status": verdict,
-                "execution_time_ms": execution_time_ms,
-                "peak_memory_mb": peak_memory_mb,
-            })
-        except Exception:
-            logger.exception(
-                "Callback permanently failed after %d retries for %s — sending to DLX",
-                MAX_RETRIES, callback_url,
-            )
-            raise
+        # Fire the callback in the background so the message is acked immediately
+        # and the worker can start processing the next submission.
+        # The result is safe in Redis cache + DB even if the callback ultimately fails.
+        asyncio.create_task(_fire_callback(callback_url, verdict, execution_time_ms, peak_memory_mb))
+
+
+async def _fire_callback(callback_url: str, verdict: str, execution_time_ms: float, peak_memory_mb: float):
+    """Best-effort background delivery of the webhook callback."""
+    try:
+        await send_callback(callback_url, {
+            "status": verdict,
+            "execution_time_ms": execution_time_ms,
+            "peak_memory_mb": peak_memory_mb,
+        })
+    except Exception:
+        logger.exception(
+            "Callback permanently failed after %d retries for %s (result is cached in Redis + DB)",
+            MAX_RETRIES, callback_url,
+        )
 
 async def main():
     logger.info(f"Connecting to RabbitMQ at {RABBITMQ_HOST}...")

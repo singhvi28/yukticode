@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-RABBITMQ_HOST = 'localhost'
+RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
 CALLBACK_TIMEOUT = 10      # seconds per attempt
 MAX_RETRIES = 3
 
@@ -74,19 +74,24 @@ async def run_callback(message: aio_pika.abc.AbstractIncomingMessage):
 
         logger.info("Verdict: %s — sending callback to %s", judge_dict["verdict"], callback_url)
 
-        try:
-            await send_callback(callback_url, {
-                "status": judge_dict["verdict"], 
-                "std_out": judge_dict.get("output", ""),
-                "execution_time_ms": judge_dict.get("execution_time_ms", 0.0),
-                "peak_memory_mb": judge_dict.get("peak_memory_mb", 0.0)
-            })
-        except Exception:
-            logger.exception(
-                "Callback permanently failed after %d retries for %s — crashing to nack",
-                MAX_RETRIES, callback_url,
-            )
-            raise
+        # Fire the callback in the background so the message is acked immediately
+        asyncio.create_task(_fire_callback(callback_url, judge_dict))
+
+
+async def _fire_callback(callback_url: str, judge_dict: dict):
+    """Best-effort background delivery of the webhook callback."""
+    try:
+        await send_callback(callback_url, {
+            "status": judge_dict["verdict"],
+            "std_out": judge_dict.get("output", ""),
+            "execution_time_ms": judge_dict.get("execution_time_ms", 0.0),
+            "peak_memory_mb": judge_dict.get("peak_memory_mb", 0.0)
+        })
+    except Exception:
+        logger.exception(
+            "Callback permanently failed after %d retries for %s (result is cached in Redis)",
+            MAX_RETRIES, callback_url,
+        )
 
 async def main():
     logger.info(f"Connecting to RabbitMQ at {RABBITMQ_HOST}...")
