@@ -34,3 +34,17 @@ CMD ["python3", "submit_worker.py"]
 FROM base AS run_worker
 WORKDIR /app/worker
 CMD ["python3", "run_worker.py"]
+
+# ---------------------------------------------------------------------------
+# celery_worker target — runs scheduled reaping tasks (needs Docker socket)
+# ---------------------------------------------------------------------------
+FROM base AS celery_worker
+WORKDIR /app
+CMD ["celery", "-A", "worker.tasks", "worker", "--loglevel=info"]
+
+# ---------------------------------------------------------------------------
+# celery_beat target — triggers scheduled tasks
+# ---------------------------------------------------------------------------
+FROM base AS celery_beat
+WORKDIR /app
+CMD ["celery", "-A", "worker.tasks", "beat", "--loglevel=info"]
