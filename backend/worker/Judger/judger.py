@@ -102,11 +102,12 @@ def run_judger(language, time_limit, memory_limit,
     total_time_ms: float = 0.0
     peak_memory_mb: float = 0.0
 
-    def _result(verdict: str) -> dict:
+    def _result(verdict: str, msg: str = "") -> dict:
         return {
             "verdict": verdict,
             "execution_time_ms": round(total_time_ms, 2),
             "peak_memory_mb": peak_memory_mb,
+            "message": msg[:2000],  # cap message length
         }
 
     container = None
@@ -121,9 +122,9 @@ def run_judger(language, time_limit, memory_limit,
         put_files_to_container(container, language, src_code, None, None)
 
         if language in ["cpp", "java"]:
-            compile_exit_code, _ = language_instance.compile(submission_id=submission_id)
+            compile_exit_code, compile_output = language_instance.compile(submission_id=submission_id)
             if compile_exit_code == 1:
-                return _result("CE")
+                return _result("CE", compile_output)
                 
         if not test_cases:
             return _result("AC")
@@ -137,7 +138,7 @@ def run_judger(language, time_limit, memory_limit,
 
             try:
                 t_start = time.perf_counter()
-                run_exit_code, _, isolate_time, isolate_mem = language_instance.run(submission_id=submission_id)
+                run_exit_code, _, isolate_time, isolate_mem, run_stderr = language_instance.run(submission_id=submission_id)
                 elapsed_ms = isolate_time if isolate_time > 0 else (time.perf_counter() - t_start) * 1000.0
             except TLEException as e:
                 logger.warning("[%s] Time limit exceeded on test case %d", submission_id, i+1)
@@ -150,7 +151,7 @@ def run_judger(language, time_limit, memory_limit,
 
             if run_exit_code != 0:
                 logger.warning("[%s] Non-zero exit code %s on test case %d", submission_id, run_exit_code, i+1)
-                return _result(map_exit_code(run_exit_code))
+                return _result(map_exit_code(run_exit_code), run_stderr)
 
             expected_op_data = extract_file_from_container(container, "/workspace/expected_op.txt")
             actual_op_data = extract_file_from_container(container, "/workspace/actual_op.txt")
@@ -163,7 +164,7 @@ def run_judger(language, time_limit, memory_limit,
 
     except SecurityViolationException as e:
         logger.warning("[%s] Security violation: %s", submission_id, str(e))
-        return _result("CE")
+        return _result("CE", str(e))
     except Exception:
         logger.exception(
             "[%s] Unhandled error during judging (language=%s, time_limit=%s, memory_limit=%s)",
@@ -199,35 +200,35 @@ def custom_run(language, time_limit, memory_limit,
         put_files_to_container(container, language, src_code, std_in)
 
         if language in ["cpp", "java"]:
-            compile_exit_code, _ = language_instance.compile(submission_id=submission_id)
+            compile_exit_code, compile_output = language_instance.compile(submission_id=submission_id)
             if compile_exit_code == 1:
-                return {"verdict": "CE", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
+                return {"verdict": "CE", "output": "", "message": compile_output[:2000], "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
 
         start_time = time.perf_counter()
         try:
-            run_exit_code, _, isolate_time, isolate_mem = language_instance.run(submission_id=submission_id)
+            run_exit_code, _, isolate_time, isolate_mem, run_stderr = language_instance.run(submission_id=submission_id)
             elapsed_ms = isolate_time if isolate_time > 0 else (time.perf_counter() - start_time) * 1000.0
             peak_mb = isolate_mem
         except TLEException as e:
             logger.warning("[%s] Time limit exceeded — stopping container", submission_id)
-            return {"verdict": "TLE", "output": "", "execution_time_ms": time_limit * 1000.0, "peak_memory_mb": getattr(e, "peak_memory_mb", 0.0)}
+            return {"verdict": "TLE", "output": "", "message": "", "execution_time_ms": time_limit * 1000.0, "peak_memory_mb": getattr(e, "peak_memory_mb", 0.0)}
 
         run_output = extract_file_from_container(container, "/workspace/actual_op.txt")
 
         if run_exit_code == 0:
-            return {"verdict": "AC", "output": run_output, "execution_time_ms": elapsed_ms, "peak_memory_mb": peak_mb}
+            return {"verdict": "AC", "output": run_output, "message": "", "execution_time_ms": elapsed_ms, "peak_memory_mb": peak_mb}
 
-        return {"verdict": map_exit_code(run_exit_code), "output": "", "execution_time_ms": elapsed_ms, "peak_memory_mb": peak_mb}
+        return {"verdict": map_exit_code(run_exit_code), "output": "", "message": run_stderr[:2000], "execution_time_ms": elapsed_ms, "peak_memory_mb": peak_mb}
 
     except SecurityViolationException as e:
         logger.warning("[%s] Security violation in custom run: %s", submission_id, str(e))
-        return {"verdict": "CE", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
+        return {"verdict": "CE", "output": "", "message": str(e), "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
     except Exception:
         logger.exception(
             "[%s] Unhandled error during custom run (language=%s, time_limit=%s, memory_limit=%s)",
             submission_id, language, time_limit, memory_limit,
         )
-        return {"verdict": "SYSTEM_ERROR", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
+        return {"verdict": "SYSTEM_ERROR", "output": "", "message": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
     finally:
         if container:
             try:

@@ -109,21 +109,25 @@ const ProblemDetailPage = () => {
       return;
     }
 
-    // Show "Judging" state immediately
-    setResult({ status: 'JUDGING' });
+    // Show "Judging" state after a 200ms delay to avoid a brief flash
+    // when fast verdicts arrive from the Redis cache.
+    const judgingTimer = setTimeout(() => {
+      setResult({ status: 'JUDGING' });
+    }, 200);
 
     // --- WebSocket first ---
     let wsResolved = false;
 
     const applyResult = (data) => {
       wsResolved = true;
+      clearTimeout(judgingTimer);
       setResult({
         status: data.status,
         time: data.execution_time_ms ? `${data.execution_time_ms.toFixed(1)}ms` : '-',
         memory: data.peak_memory_mb ? `${data.peak_memory_mb.toFixed(1)}MB` : '-',
         passed: data.status === 'AC' ? 15 : 0,
         total: 15,
-        message: data.status === 'AC' ? '' : `Verdict: ${data.status}`
+        message: data.message || (data.status !== 'AC' ? `Verdict: ${data.status}` : '')
       });
       setSubmitting(false);
     };
@@ -254,6 +258,7 @@ const ProblemDetailPage = () => {
             updatedResults[t.tabId] = {
               status: r.status,
               output: r.std_out,
+              message: r.message || '',
               expectedOutput: t.expected,
               time: r.execution_time_ms ? `${r.execution_time_ms.toFixed(1)}ms` : '-',
               memory: r.peak_memory_mb ? `${r.peak_memory_mb.toFixed(1)}MB` : '-'
@@ -420,7 +425,18 @@ const ProblemDetailPage = () => {
                   <div className="stat"><span>Test Cases:</span> {result.passed}/{result.total}</div>
                 </div>
               )}
-              {result.message && <div className="console-message">{result.message}</div>}
+              {result.message && <pre className="console-message" style={{
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontFamily: 'monospace',
+                fontSize: '0.85rem',
+                background: 'rgba(0,0,0,0.3)',
+                padding: '12px',
+                borderRadius: '6px',
+                margin: '8px 0 0',
+                maxHeight: '200px',
+                overflow: 'auto'
+              }}>{result.message}</pre>}
             </div>
           )
         )}

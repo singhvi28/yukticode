@@ -74,6 +74,7 @@ async def run_callback(message: aio_pika.abc.AbstractIncomingMessage):
                 results.append({
                     "status": judge_dict["verdict"],
                     "std_out": judge_dict.get("output", ""),
+                    "message": judge_dict.get("message", ""),
                     "execution_time_ms": judge_dict.get("execution_time_ms", 0.0),
                     "peak_memory_mb": judge_dict.get("peak_memory_mb", 0.0),
                 })
@@ -129,6 +130,7 @@ async def _fire_callback(callback_url: str, judge_dict: dict):
         await send_callback(callback_url, {
             "status": judge_dict["verdict"],
             "std_out": judge_dict.get("output", ""),
+            "message": judge_dict.get("message", ""),
             "execution_time_ms": judge_dict.get("execution_time_ms", 0.0),
             "peak_memory_mb": judge_dict.get("peak_memory_mb", 0.0)
         })

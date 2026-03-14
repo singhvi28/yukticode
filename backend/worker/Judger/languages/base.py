@@ -152,17 +152,16 @@ class BaseLanguage(ABC):
         self.container.exec_run(f"/bin/sh -c 'cp {box_dir}/actual_op.txt /workspace/actual_op.txt'")
 
         # 6. Capture stderr for diagnostics on RE verdicts
+        stderr_str = ''
         self.container.exec_run(f"/bin/sh -c 'cp {box_dir}/error_log.txt /workspace/error_log.txt 2>/dev/null || true'")
         if result.get('exit_code', 0) != 0:
             _, stderr_out = self.container.exec_run("cat /workspace/error_log.txt")
             stderr_str = stderr_out.decode('utf-8', errors='replace') if stderr_out else ''
-            if stderr_str.strip():
-                print(f"DEBUG ISOLATE STDERR: {stderr_str[:500]}")
 
         self._cleanup_isolate()
 
         # Isolate returns non-zero if the sandboxed process exits non-zero
-        return result['exit_code'], result['output'], execution_time_ms, peak_memory_mb
+        return result['exit_code'], result['output'], execution_time_ms, peak_memory_mb, stderr_str
 
     def _cleanup_isolate(self):
         # Ensure cleanup also drops the --cg flag

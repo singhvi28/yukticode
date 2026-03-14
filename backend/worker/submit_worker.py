@@ -75,6 +75,7 @@ async def submit_callback(message: aio_pika.abc.AbstractIncomingMessage):
         verdict = judge_result.get("verdict", "SYSTEM_ERROR")
         execution_time_ms = judge_result.get("execution_time_ms", 0.0)
         peak_memory_mb = judge_result.get("peak_memory_mb", 0.0)
+        message = judge_result.get("message", "")
 
         logger.info("Verdict: %s (%.1fms, %.1fMB) — sending callback to %s",
                     verdict, execution_time_ms, peak_memory_mb, callback_url)
@@ -82,16 +83,17 @@ async def submit_callback(message: aio_pika.abc.AbstractIncomingMessage):
         # Fire the callback in the background so the message is acked immediately
         # and the worker can start processing the next submission.
         # The result is safe in Redis cache + DB even if the callback ultimately fails.
-        asyncio.create_task(_fire_callback(callback_url, verdict, execution_time_ms, peak_memory_mb))
+        asyncio.create_task(_fire_callback(callback_url, verdict, execution_time_ms, peak_memory_mb, message))
 
 
-async def _fire_callback(callback_url: str, verdict: str, execution_time_ms: float, peak_memory_mb: float):
+async def _fire_callback(callback_url: str, verdict: str, execution_time_ms: float, peak_memory_mb: float, message: str = ""):
     """Best-effort background delivery of the webhook callback."""
     try:
         await send_callback(callback_url, {
             "status": verdict,
             "execution_time_ms": execution_time_ms,
             "peak_memory_mb": peak_memory_mb,
+            "message": message,
         })
     except Exception:
         logger.exception(
