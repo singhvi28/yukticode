@@ -36,8 +36,9 @@ class DockerManager:
         container = self.client.containers.run(
             image=image.id,
             name=self.container_name,
+            runtime="runsc",  # Use gVisor for stronger kernel isolation
             detach=True,
-            tty=True, # Critical to keep it alive while injecting archives
+            tty=True,  # Critical to keep it alive while injecting archives
             mem_limit=f'{self.memory_limit}m',
             network_disabled=True,
             cap_add=["SYS_ADMIN", "NET_ADMIN"],   # Required for Isolate namespaces
