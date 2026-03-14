@@ -4,105 +4,105 @@ import { Trophy, Code2, Activity, Calendar } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const ProfilePage = () => {
-    const { user } = useAuth();
+  const { user } = useAuth();
 
-    if (!user) {
-        return (
-            <div className="container empty-state-container animate-fade-in">
-                <div className="glass-card text-center p-8">
-                    <h2>Please login to view your profile</h2>
-                    <Link to="/login" className="btn btn-primary mt-4">Login</Link>
-                </div>
-            </div>
-        );
-    }
-
-    // Derived mock stats (In a real app, these come from backend)
-    const stats = {
-        rating: user.rating || 1500,
-        solved: user.total_submissions || 42,
-        rank: 'Specialist',
-        joinDate: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-    };
-
+  if (!user) {
     return (
-        <div className="container profile-page animate-fade-in">
-            <div className="profile-grid">
-                {/* Left Column: User Info Card */}
-                <div className="profile-sidebar glass-card">
-                    <div className="avatar">
-                        {user.username.charAt(0).toUpperCase()}
-                    </div>
-                    <h2 className="username">{user.username}</h2>
-                    <p className="rank-title">{stats.rank}</p>
+      <div className="container empty-state-container animate-fade-in">
+        <div className="glass-card text-center p-8">
+          <h2>Please login to view your profile</h2>
+          <Link to="/login" className="btn btn-primary mt-4">Login</Link>
+        </div>
+      </div>
+    );
+  }
 
-                    <div className="user-details">
-                        <div className="detail-item">
-                            <Calendar size={16} />
-                            <span>Joined {stats.joinDate}</span>
-                        </div>
-                        <div className="detail-item">
-                            <Activity size={16} />
-                            <span>{user.is_active ? 'Active' : 'Inactive'}</span>
-                        </div>
-                        {user.is_admin && (
-                            <div className="detail-item admin-badge">
-                                Admin
-                            </div>
-                        )}
-                    </div>
+  // Derived mock stats (In a real app, these come from backend)
+  const stats = {
+    rating: user.rating || 1500,
+    solved: user.total_submissions || 42,
+    rank: 'Specialist',
+    joinDate: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+  };
 
-                    <Link to="/settings" className="btn btn-secondary w-full mt-6 justify-center">
-                        Edit Profile
-                    </Link>
-                </div>
+  return (
+    <div className="container profile-page animate-fade-in">
+      <div className="profile-grid">
+        {/* Left Column: User Info Card */}
+        <div className="profile-sidebar glass-card">
+          <div className="avatar">
+            {user.username.charAt(0).toUpperCase()}
+          </div>
+          <h2 className="username">{user.username}</h2>
+          <p className="rank-title">{stats.rank}</p>
 
-                {/* Right Column: Statistics */}
-                <div className="profile-content">
-                    <div className="stats-cards">
-                        <div className="stat-card glass-card border-blue">
-                            <div className="stat-icon bg-blue">
-                                <Trophy size={24} />
-                            </div>
-                            <div className="stat-info">
-                                <h3>Contest Rating</h3>
-                                <div className="stat-value text-blue">{stats.rating}</div>
-                            </div>
-                        </div>
+          <div className="user-details">
+            <div className="detail-item">
+              <Calendar size={16} />
+              <span>Joined {stats.joinDate}</span>
+            </div>
+            <div className="detail-item">
+              <Activity size={16} />
+              <span>{user.is_active ? 'Active' : 'Inactive'}</span>
+            </div>
+            {user.is_admin && (
+              <div className="detail-item admin-badge">
+                Admin
+              </div>
+            )}
+          </div>
 
-                        <div className="stat-card glass-card border-green">
-                            <div className="stat-icon bg-green">
-                                <Code2 size={24} />
-                            </div>
-                            <div className="stat-info">
-                                <h3>Problems Solved</h3>
-                                <div className="stat-value text-green">{stats.solved}</div>
-                            </div>
-                        </div>
+          <Link to="/settings" className="btn btn-secondary w-full mt-6 justify-center">
+            Edit Profile
+          </Link>
+        </div>
 
-                        <div className="stat-card glass-card border-amber">
-                            <div className="stat-icon bg-amber">
-                                <Activity size={24} />
-                            </div>
-                            <div className="stat-info">
-                                <h3>Total Submissions</h3>
-                                <div className="stat-value text-amber">{stats.solved * 3}</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Activity Heatmap Mock */}
-                    <div className="activity-section glass-card mt-6">
-                        <h3>Recent Activity</h3>
-                        <div className="activity-placeholder">
-                            <p className="text-muted">Activity heatmap will be displayed here.</p>
-                            <Link to="/submissions" className="btn btn-secondary btn-sm mt-4">View Submissions</Link>
-                        </div>
-                    </div>
-                </div>
+        {/* Right Column: Statistics */}
+        <div className="profile-content">
+          <div className="stats-cards">
+            <div className="stat-card glass-card border-blue">
+              <div className="stat-icon bg-blue">
+                <Trophy size={24} />
+              </div>
+              <div className="stat-info">
+                <h3>Contest Rating</h3>
+                <div className="stat-value text-blue">{stats.rating}</div>
+              </div>
             </div>
 
-            <style jsx>{`
+            <div className="stat-card glass-card border-green">
+              <div className="stat-icon bg-green">
+                <Code2 size={24} />
+              </div>
+              <div className="stat-info">
+                <h3>Problems Solved</h3>
+                <div className="stat-value text-green">{stats.solved}</div>
+              </div>
+            </div>
+
+            <div className="stat-card glass-card border-amber">
+              <div className="stat-icon bg-amber">
+                <Activity size={24} />
+              </div>
+              <div className="stat-info">
+                <h3>Total Submissions</h3>
+                <div className="stat-value text-amber">{stats.solved * 3}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Activity Heatmap Mock */}
+          <div className="activity-section glass-card mt-6">
+            <h3>Recent Activity</h3>
+            <div className="activity-placeholder">
+              <p className="text-muted">Activity heatmap will be displayed here.</p>
+              <Link to="/submissions" className="btn btn-secondary btn-sm mt-4">View Submissions</Link>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <style jsx>{`
         .profile-page {
           padding: 3rem 1.5rem;
         }
@@ -137,7 +137,7 @@ const ProfilePage = () => {
           align-items: center;
           justify-content: center;
           margin: 0 auto 1.5rem;
-          box-shadow: 0 8px 16px rgba(59, 130, 246, 0.3);
+          box-shadow: 0 8px 16px rgba(71, 85, 105, 0.3);
         }
 
         .username {
@@ -191,7 +191,7 @@ const ProfilePage = () => {
           gap: 1.5rem;
         }
 
-        .border-blue { border-left: 4px solid #3b82f6; }
+        .border-blue { border-left: 4px solid #475569; }
         .border-green { border-left: 4px solid #10b981; }
         .border-amber { border-left: 4px solid #f59e0b; }
 
@@ -204,7 +204,7 @@ const ProfilePage = () => {
           justify-content: center;
         }
 
-        .bg-blue { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+        .bg-blue { background: rgba(71, 85, 105, 0.2); color: #94a3b8; }
         .bg-green { background: rgba(16, 185, 129, 0.2); color: #34d399; }
         .bg-amber { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
 
@@ -219,7 +219,7 @@ const ProfilePage = () => {
           font-weight: 700;
         }
 
-        .text-blue { color: #60a5fa; }
+        .text-blue { color: #94a3b8; }
         .text-green { color: #34d399; }
         .text-amber { color: #fbbf24; }
 
@@ -252,8 +252,8 @@ const ProfilePage = () => {
         .text-muted { color: var(--text-muted); }
         .p-8 { padding: 4rem 2rem; }
       `}</style>
-        </div>
-    );
+    </div>
+  );
 };
 
 export default ProfilePage;

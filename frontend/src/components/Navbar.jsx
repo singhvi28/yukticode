@@ -105,7 +105,7 @@ const Navbar = () => {
         }
 
         .admin-link:hover {
-          color: #60a5fa !important;
+          color: #94a3b8 !important;
         }
 
         .nav-auth {

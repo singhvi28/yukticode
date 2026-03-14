@@ -4,86 +4,86 @@ import { useAuth } from '../context/AuthContext';
 import { Code2, ArrowRight, Loader } from 'lucide-react';
 
 const LoginPage = () => {
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-    const { login } = useAuth();
-    const navigate = useNavigate();
+  const { login } = useAuth();
+  const navigate = useNavigate();
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setError('');
-        setIsSubmitting(true);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setIsSubmitting(true);
 
-        try {
-            await login(username, password);
-            navigate('/');
-        } catch (err) {
-            setError(err.response?.data?.detail || 'Failed to login. Please check your credentials.');
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
+    try {
+      await login(username, password);
+      navigate('/problems');
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Failed to login. Please check your credentials.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
-    return (
-        <div className="auth-container animate-fade-in">
-            <div className="auth-card glass-card">
-                <div className="auth-header">
-                    <Code2 size={40} className="auth-logo" />
-                    <h2>Welcome Back</h2>
-                    <p>Login to submit code and track progress</p>
-                </div>
+  return (
+    <div className="auth-container animate-fade-in">
+      <div className="auth-card glass-card">
+        <div className="auth-header">
+          <Code2 size={40} className="auth-logo" />
+          <h2>Welcome Back</h2>
+          <p>Login to submit code and track progress</p>
+        </div>
 
-                {error && <div className="auth-error">{error}</div>}
+        {error && <div className="auth-error">{error}</div>}
 
-                <form className="auth-form" onSubmit={handleSubmit}>
-                    <div className="form-group">
-                        <label htmlFor="username">Username</label>
-                        <input
-                            id="username"
-                            type="text"
-                            className="form-control"
-                            placeholder="Enter your username"
-                            value={username}
-                            onChange={(e) => setUsername(e.target.value)}
-                            required
-                        />
-                    </div>
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label htmlFor="username">Username</label>
+            <input
+              id="username"
+              type="text"
+              className="form-control"
+              placeholder="Enter your username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+          </div>
 
-                    <div className="form-group">
-                        <label htmlFor="password">Password</label>
-                        <input
-                            id="password"
-                            type="password"
-                            className="form-control"
-                            placeholder="Enter your password"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            required
-                        />
-                    </div>
+          <div className="form-group">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              className="form-control"
+              placeholder="Enter your password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
 
-                    <button
-                        type="submit"
-                        className="btn btn-primary auth-submit"
-                        disabled={isSubmitting}
-                    >
-                        {isSubmitting ? (
-                            <><Loader size={18} className="spinner" /> Signing In...</>
-                        ) : (
-                            <>Sign In <ArrowRight size={18} /></>
-                        )}
-                    </button>
-                </form>
+          <button
+            type="submit"
+            className="btn btn-primary auth-submit"
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <><Loader size={18} className="spinner" /> Signing In...</>
+            ) : (
+              <>Sign In <ArrowRight size={18} /></>
+            )}
+          </button>
+        </form>
 
-                <div className="auth-footer">
-                    <p>Don't have an account? <Link to="/register">Sign up</Link></p>
-                </div>
-            </div>
+        <div className="auth-footer">
+          <p>Don't have an account? <Link to="/register">Sign up</Link></p>
+        </div>
+      </div>
 
-            <style jsx>{`
+      <style jsx>{`
         .auth-container {
           flex: 1;
           display: flex;
@@ -185,8 +185,8 @@ const LoginPage = () => {
           to { transform: rotate(360deg); }
         }
       `}</style>
-        </div>
-    );
+    </div>
+  );
 };
 
 export default LoginPage;

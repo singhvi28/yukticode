@@ -3,62 +3,62 @@ import { Link } from 'react-router-dom';
 import { Terminal, Zap, Trophy, Code } from 'lucide-react';
 
 const HomePage = () => {
-    return (
-        <div className="home-page animate-fade-in">
-            {/* Hero Section */}
-            <section className="hero">
-                <div className="hero-bg-glow"></div>
-                <div className="container hero-content">
-                    <h1 className="hero-title">
-                        Master Competitive <br />
-                        <span className="text-gradient">Programming</span>
-                    </h1>
-                    <p className="hero-subtitle">
-                        An open-source, high-performance online judge for algorithmic problem solving.
-                        Practice coding challenges and compete on the leaderboard.
-                    </p>
-                    <div className="hero-actions">
-                        <Link to="/problems" className="btn btn-primary btn-lg">
-                            Start Solving
-                        </Link>
-                        <Link to="/register" className="btn btn-secondary btn-lg">
-                            Create Account
-                        </Link>
-                    </div>
-                </div>
-            </section>
+  return (
+    <div className="home-page animate-fade-in">
+      {/* Hero Section */}
+      <section className="hero">
+        <div className="hero-bg-glow"></div>
+        <div className="container hero-content">
+          <h1 className="hero-title">
+            Master Competitive <br />
+            <span className="text-gradient">Programming</span>
+          </h1>
+          <p className="hero-subtitle">
+            An open-source, high-performance online judge for algorithmic problem solving.
+            Practice coding challenges and compete on the leaderboard.
+          </p>
+          <div className="hero-actions">
+            <Link to="/problems" className="btn btn-primary btn-lg">
+              Start Solving
+            </Link>
+            <Link to="/register" className="btn btn-secondary btn-lg">
+              Create Account
+            </Link>
+          </div>
+        </div>
+      </section>
 
-            {/* Features Section */}
-            <section className="features container">
-                <div className="features-grid">
-                    <div className="feature-card glass-card">
-                        <div className="feature-icon bg-blue">
-                            <Zap size={24} />
-                        </div>
-                        <h3>Lightning Fast Execution</h3>
-                        <p>Code is judged asynchronously using independent RabbitMQ workers, providing instant feedback on submissions.</p>
-                    </div>
+      {/* Features Section */}
+      <section className="features container">
+        <div className="features-grid">
+          <div className="feature-card glass-card">
+            <div className="feature-icon bg-blue">
+              <Zap size={24} />
+            </div>
+            <h3>Lightning Fast Execution</h3>
+            <p>Code is judged asynchronously using independent RabbitMQ workers, providing instant feedback on submissions.</p>
+          </div>
 
-                    <div className="feature-card glass-card">
-                        <div className="feature-icon bg-green">
-                            <Terminal size={24} />
-                        </div>
-                        <h3>Multiple Languages</h3>
-                        <p>Submit your solutions in C++, Python, Java, and and Javascript with secure, isolated Docker environments.</p>
-                    </div>
+          <div className="feature-card glass-card">
+            <div className="feature-icon bg-green">
+              <Terminal size={24} />
+            </div>
+            <h3>Multiple Languages</h3>
+            <p>Submit your solutions in C++, Python, Java, and and Javascript with secure, isolated Docker environments.</p>
+          </div>
 
-                    <div className="feature-card glass-card">
-                        <div className="feature-icon bg-amber">
-                            <Code size={24} />
-                        </div>
-                        <h3>Rich Code Editor</h3>
-                        <p>Write standard code with syntax highlighting using the integrated Monaco Editor directly in your browser.</p>
-                    </div>
-                </div>
-            </section>
+          <div className="feature-card glass-card">
+            <div className="feature-icon bg-amber">
+              <Code size={24} />
+            </div>
+            <h3>Rich Code Editor</h3>
+            <p>Write standard code with syntax highlighting using the integrated Monaco Editor directly in your browser.</p>
+          </div>
+        </div>
+      </section>
 
-            {/* Styles */}
-            <style jsx>{`
+      {/* Styles */}
+      <style jsx>{`
         .home-page {
           flex: 1;
           display: flex;
@@ -94,7 +94,7 @@ const HomePage = () => {
         }
 
         .text-gradient {
-          background: linear-gradient(135deg, #3b82f6 0%, #0ea5e9 100%);
+          background: linear-gradient(135deg, #475569 0%, #94a3b8 100%);
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
         }
@@ -150,7 +150,7 @@ const HomePage = () => {
           color: white;
         }
 
-        .bg-blue { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+        .bg-blue { background: rgba(71, 85, 105, 0.2); color: #94a3b8; }
         .bg-green { background: rgba(16, 185, 129, 0.2); color: #34d399; }
         .bg-amber { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
 
@@ -174,8 +174,8 @@ const HomePage = () => {
           }
         }
       `}</style>
-        </div>
-    );
+    </div>
+  );
 };
 
 export default HomePage;

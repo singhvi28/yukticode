@@ -67,6 +67,17 @@ const ProblemDetailPage = () => {
     fetchProblem();
   }, [id]);
 
+  const handleEditorWillMount = (monaco) => {
+    monaco.editor.defineTheme('pitch-black', {
+      base: 'vs-dark',
+      inherit: true,
+      rules: [],
+      colors: {
+        'editor.background': '#010101',
+      }
+    });
+  };
+
   const WS_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:9000')
     .replace(/^http/, 'ws');
 
@@ -368,7 +379,8 @@ const ProblemDetailPage = () => {
           <Editor
             height="100%"
             language={language}
-            theme="vs-dark"
+            theme="pitch-black"
+            beforeMount={handleEditorWillMount}
             value={code}
             onChange={(val) => setCode(val)}
             options={{
