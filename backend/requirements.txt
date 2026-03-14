@@ -1,21 +1,38 @@
-docker
-fastapi
-uvicorn
-pydantic
-pika
-aio-pika
-requests
-msgpack
-redis
+docker==7.1.0
+fastapi==0.128.0
+uvicorn==0.40.0
+pydantic==2.12.5
 
-# Testing
-pytest
-pytest-asyncio
-httpx
+# messaging / queues
 
-# Database
-sqlalchemy
-alembic
-asyncpg
-passlib[argon2]
-psycopg2-binary
+pika==1.3.2
+aio-pika==9.6.1
+redis==5.0.8
+msgpack==1.1.2
+
+# networking
+
+requests==2.32.5
+httpx==0.28.1
+
+# grpc
+
+grpcio==1.78.1
+grpcio-tools==1.71.0
+protobuf==5.29.6
+
+# database
+
+sqlalchemy==2.0.25
+alembic==1.18.4
+asyncpg==0.29.0
+psycopg2-binary==2.9.11
+
+# auth / security
+
+passlib[argon2]==1.7.4
+
+# testing
+
+pytest==9.0.2
+pytest-asyncio==1.3.0
