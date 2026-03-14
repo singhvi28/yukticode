@@ -10,21 +10,32 @@ Covers:
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 import httpx
 import uuid
 
 from server.db.database import get_db_session
-from server.db.models import User, Problem, ProblemVersion, TestCase, Contest, ContestProblem
+from server.db.models import User, Problem, ProblemVersion, TestCase, Contest, ContestProblem, Submission
 from server.auth import get_current_user
 from server.blob_storage import upload_text
-from server.config import RUN_EXCHANGE, RUN_ROUTING_KEY
+from server.config import RUN_EXCHANGE, RUN_ROUTING_KEY, REDIS_URL
 from server.messaging import RabbitMQClient
+from server.ws import manager as ws_manager
 
 import datetime
+import json
+import redis.asyncio as aioredis
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+# Redis client for storing dry-run expected outputs (multi-process safe)
+_redis = None
+async def _get_redis():
+    global _redis
+    if _redis is None:
+        _redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+    return _redis
 
 
 # ---------------------------------------------------------------------------
@@ -61,13 +72,13 @@ class TestCaseCreate(BaseModel):
     input_data: str
     expected_output: str
     is_sample: bool = False
-    score: int = 10
+    score: int = Field(default=10, ge=0)
 
 class TestCaseUpdate(BaseModel):
     input_data: Optional[str] = None
     expected_output: Optional[str] = None
     is_sample: Optional[bool] = None
-    score: Optional[int] = None
+    score: Optional[int] = Field(default=None, ge=0)
 
 class TestCaseRunRequest(BaseModel):
     language: str = "py"
@@ -207,6 +218,25 @@ async def admin_delete_problem(
     problem = result.scalars().first()
     if not problem:
         raise HTTPException(status_code=404, detail="Problem not found")
+
+    # Manually delete child rows that don't have cascade configured
+    # (Submissions and ContestProblems reference Problem indirectly or directly)
+    # ProblemVersion → TestCase already cascades via the ORM relationship.
+    # But Submissions reference ProblemVersion, so we need to handle those.
+    versions = await db.execute(
+        select(ProblemVersion).where(ProblemVersion.problem_id == problem_id)
+    )
+    version_ids = [v.id for v in versions.scalars().all()]
+    if version_ids:
+        await db.execute(
+            Submission.__table__.delete().where(Submission.problem_version_id.in_(version_ids))
+        )
+
+    # Delete ContestProblem associations
+    await db.execute(
+        ContestProblem.__table__.delete().where(ContestProblem.problem_id == problem_id)
+    )
+
     await db.delete(problem)
     await db.commit()
 
@@ -329,7 +359,7 @@ async def admin_run_testcase(
 
     # Use a unique run_id so we can match the callback
     run_id = str(uuid.uuid4())
-    callback_url = f"http://127.0.0.1:9000/admin/run-result/{run_id}"
+    callback_url = f"http://backend:9000/admin/run-result/{run_id}"
 
     # Enqueue via the existing /run endpoint (going through MQ → worker)
     run_payload = {
@@ -341,59 +371,78 @@ async def admin_run_testcase(
         "callback_url": callback_url,
     }
 
-    # Store expected_output in a simple in-process dict so the callback can compare.
-    # In production this would be a Redis key with TTL.
-    _pending_runs[run_id] = {
+    # Store expected_output in Redis with 60s TTL (multi-process safe)
+    r = await _get_redis()
+    await r.set(f"admin_run:{run_id}", json.dumps({
         "expected_output": tc.expected_output,
-        "result": None,
-    }
+    }), ex=60)
 
     async with httpx.AsyncClient() as client:
-        await client.post("http://127.0.0.1:9000/run", json=run_payload)
+        await client.post("http://backend:9000/run", json=run_payload)
 
-    return {"run_id": run_id, "msg": "Run enqueued. Poll GET /admin/run-result/{run_id} for result."}
+    return {"run_id": run_id, "msg": "Run enqueued. Connect to WS /ws/runs/{run_id} for result."}
 
 
 # ---------------------------------------------------------------------------
-# Dry-run result holder (simple in-process store — fine for dev/admin use)
+# Dry-run result handler (Redis-backed, multi-process safe)
 # ---------------------------------------------------------------------------
-
-_pending_runs: dict = {}
 
 
 from pydantic import BaseModel as _BM
 class RunResultPayload(_BM):
     status: str
     std_out: str = ""
+    message: str = ""
 
 @router.post("/run-result/{run_id}", include_in_schema=False)
 async def admin_run_result_callback(run_id: str, payload: RunResultPayload):
     """Internal callback endpoint hit by the run worker after judging."""
-    if run_id in _pending_runs:
-        expected = _pending_runs[run_id]["expected_output"]
-        # Normalise compare
+    r = await _get_redis()
+    raw = await r.get(f"admin_run:{run_id}")
+    if not raw:
+        return {"msg": "run_id expired or not found"}
+
+    pending = json.loads(raw)
+    expected = pending["expected_output"]
+
+    # Respect the worker's status first — only compare output on AC
+    if payload.status != "AC":
+        verdict = payload.status
+    else:
         def norm(s): return "\n".join(l.rstrip() for l in s.strip().splitlines())
         verdict = "AC" if norm(payload.std_out) == norm(expected) else "WA"
-        _pending_runs[run_id]["result"] = {
-            "worker_status": payload.status,
-            "verdict": verdict,
-            "std_out": payload.std_out,
-            "expected": expected,
-        }
+
+    result_data = {
+        "worker_status": payload.status,
+        "verdict": verdict,
+        "std_out": payload.std_out,
+        "expected": expected,
+        "message": payload.message,
+    }
+
+    # Store result in Redis and broadcast via WebSocket for real-time delivery
+    await r.set(f"admin_result:{run_id}", json.dumps(result_data), ex=60)
+    await r.delete(f"admin_run:{run_id}")
+    await ws_manager.broadcast(run_id, result_data)
+
     return {"msg": "received"}
 
 
 @router.get("/run-result/{run_id}")
 async def admin_poll_run_result(run_id: str, admin: User = Depends(admin_required)):
-    """Poll for the result of a dry-run test case."""
-    if run_id not in _pending_runs:
-        raise HTTPException(status_code=404, detail="Run ID not found or expired")
-    result = _pending_runs[run_id].get("result")
-    if result is None:
+    """Poll for the result of a dry-run test case (fallback if WebSocket fails)."""
+    r = await _get_redis()
+    raw = await r.get(f"admin_result:{run_id}")
+    if raw:
+        await r.delete(f"admin_result:{run_id}")
+        return json.loads(raw)
+
+    # Still pending?
+    pending = await r.get(f"admin_run:{run_id}")
+    if pending:
         return {"status": "pending"}
-    # Clean up
-    del _pending_runs[run_id]
-    return result
+
+    raise HTTPException(status_code=404, detail="Run ID not found or expired")
 
 
 # ---------------------------------------------------------------------------

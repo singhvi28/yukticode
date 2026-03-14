@@ -105,28 +105,71 @@ const AdminProblemEditPage = () => {
             });
             const runId = r.data.run_id;
             setRunState(prev => ({ ...prev, [tc.id]: { ...prev[tc.id], runId } }));
-            // Poll for result
-            let attempts = 0;
-            const poll = setInterval(async () => {
-                attempts++;
+
+            // Use WebSocket for real-time result delivery
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/runs/${runId}`);
+            let resolved = false;
+
+            ws.onmessage = (event) => {
                 try {
-                    const res = await api.get(`/admin/run-result/${runId}`);
-                    if (res.data.status !== 'pending') {
-                        clearInterval(poll);
-                        setRunState(prev => ({
-                            ...prev,
-                            [tc.id]: { ...prev[tc.id], verdict: res.data.verdict || res.data.worker_status, std_out: res.data.std_out }
-                        }));
-                    }
+                    const data = JSON.parse(event.data);
+                    resolved = true;
+                    setRunState(prev => ({
+                        ...prev,
+                        [tc.id]: {
+                            ...prev[tc.id],
+                            verdict: data.verdict || data.worker_status,
+                            std_out: data.std_out,
+                            message: data.message || '',
+                        }
+                    }));
                 } catch {
-                    clearInterval(poll);
                     setRunState(prev => ({ ...prev, [tc.id]: { ...prev[tc.id], verdict: 'SYSTEM_ERROR' } }));
                 }
-                if (attempts > 20) { clearInterval(poll); setRunState(prev => ({ ...prev, [tc.id]: { ...prev[tc.id], verdict: 'TLE' } })); }
-            }, 1500);
+                ws.close();
+            };
+
+            ws.onerror = () => {
+                if (!resolved) {
+                    // Fallback to polling if WebSocket fails
+                    pollForResult(tc.id, runId);
+                }
+            };
+
+            // Safety timeout — fall back to polling if WS doesn't resolve in 30s
+            setTimeout(() => {
+                if (!resolved) {
+                    ws.close();
+                    pollForResult(tc.id, runId);
+                }
+            }, 30000);
+
         } catch (e) {
             setRunState(prev => ({ ...prev, [tc.id]: { ...prev[tc.id], verdict: 'SYSTEM_ERROR' } }));
         }
+    };
+
+    // Polling fallback (only used if WebSocket fails)
+    const pollForResult = async (tcId, runId) => {
+        let attempts = 0;
+        const poll = setInterval(async () => {
+            attempts++;
+            try {
+                const res = await api.get(`/admin/run-result/${runId}`);
+                if (res.data.status !== 'pending') {
+                    clearInterval(poll);
+                    setRunState(prev => ({
+                        ...prev,
+                        [tcId]: { ...prev[tcId], verdict: res.data.verdict || res.data.worker_status, std_out: res.data.std_out, message: res.data.message || '' }
+                    }));
+                }
+            } catch {
+                clearInterval(poll);
+                setRunState(prev => ({ ...prev, [tcId]: { ...prev[tcId], verdict: 'SYSTEM_ERROR' } }));
+            }
+            if (attempts > 20) { clearInterval(poll); setRunState(prev => ({ ...prev, [tcId]: { ...prev[tcId], verdict: 'TLE' } })); }
+        }, 1500);
     };
 
     if (loading) return (
@@ -201,7 +244,7 @@ const AdminProblemEditPage = () => {
                         </label>
                         <div className="form-row inline">
                             <label>Score</label>
-                            <input type="number" value={newTc.score} onChange={e => setNewTc(t => ({ ...t, score: +e.target.value }))} style={{ width: '80px' }} id="tc-score" />
+                            <input type="number" min="0" value={newTc.score} onChange={e => setNewTc(t => ({ ...t, score: Math.max(0, +e.target.value) }))} style={{ width: '80px' }} id="tc-score" />
                         </div>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
@@ -285,6 +328,11 @@ const AdminProblemEditPage = () => {
                                     <div className="actual-output">
                                         <span className="io-label">Actual Output</span>
                                         <pre className="io-pre">{rs.std_out || '(empty)'}</pre>
+                                        {rs.message && (
+                                            <pre className="io-pre" style={{ marginTop: '0.5rem', borderColor: 'rgba(239,68,68,0.3)', color: 'var(--error)' }}>
+                                                {rs.message}
+                                            </pre>
+                                        )}
                                     </div>
                                 )}
                             </div>
