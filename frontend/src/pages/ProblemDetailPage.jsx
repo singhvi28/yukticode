@@ -30,8 +30,7 @@ const ProblemDetailPage = () => {
   const defaultCode = {
     python: 'def solve():\n    # Write your solution here\n    pass\n\nif __name__ == "__main__":\n    solve()',
     cpp: '#include <iostream>\nusing namespace std;\n\nint main() {\n    // Write your solution here\n    return 0;\n}',
-    java: 'public class Main {\n    public static void main(String[] args) {\n        // Write your solution here\n    }\n}',
-    javascript: 'function solve() {\n    // Write your solution here\n}\n\nsolve();'
+    java: 'public class Main {\n    public static void main(String[] args) {\n        // Write your solution here\n    }\n}'
   };
 
   useEffect(() => {
@@ -352,7 +351,6 @@ const ProblemDetailPage = () => {
             <option value="python">Python 3</option>
             <option value="cpp">C++ 17</option>
             <option value="java">Java 11</option>
-            <option value="javascript">JavaScript (Node)</option>
           </select>
 
           <div className="toolbar-actions">
