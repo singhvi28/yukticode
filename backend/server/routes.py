@@ -53,16 +53,12 @@ async def submit(submit_request: SubmitRequest, current_user: User = Depends(get
     test_cases = result_test_cases.scalars().all()
 
     if not test_cases:
-        # Fallback if problem has no specific test cases migrated yet
-        test_cases_payload = [{
-            "input": "3\n3 2 4\n6\n",
-            "expected_output": "1 2\n",
-        }]
-    else:
-        test_cases_payload = [{
-            "input": tc.input_data,
-            "expected_output": tc.expected_output,
-        } for tc in test_cases]
+        raise HTTPException(status_code=400, detail="Problem misconfigured: No test cases found")
+
+    test_cases_payload = [{
+        "input": tc.input_data,
+        "expected_output": tc.expected_output,
+    } for tc in test_cases]
 
     # 4. Enqueue task for worker
     # Hardcoded internal URL bypasses Nginx to prevent path stripping issues

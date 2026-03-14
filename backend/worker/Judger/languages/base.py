@@ -82,6 +82,7 @@ class BaseLanguage(ABC):
             f"--dir=/usr --dir=/bin --dir=/lib --dir=/lib64 --dir=/etc "
             f"--env=PATH=/usr/bin:/bin "
             f"--time={time_limit_sec} --wall-time={wall_time_sec} "
+            f"--fsize=10240 "
             f"{mem_flag}{proc_flag}"
             f"--stdin=input.txt --stdout=actual_op.txt --stderr=error_log.txt "
             f"--run -- {process_cmd}"
