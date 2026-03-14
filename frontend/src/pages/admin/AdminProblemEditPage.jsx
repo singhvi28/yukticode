@@ -119,8 +119,8 @@ const AdminProblemEditPage = () => {
                         ...prev,
                         [tc.id]: {
                             ...prev[tc.id],
-                            verdict: data.verdict || data.worker_status,
-                            std_out: data.std_out,
+                            verdict: data.verdict || data.worker_status || data.status,
+                            std_out: data.std_out ?? '',
                             message: data.message || '',
                         }
                     }));

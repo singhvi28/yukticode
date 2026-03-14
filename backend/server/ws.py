@@ -51,20 +51,29 @@ class ConnectionManager:
                 if message["type"] == "message":
                     channel = message["channel"]
                     data = message["data"]
-                    
+                    try:
+                        parsed = json.loads(data)
+                        close_after = parsed.pop("_close", True)
+                    except (json.JSONDecodeError, TypeError):
+                        close_after = True
+                        parsed = {"raw": data}
+
+                    payload = json.dumps(parsed)
                     sockets = list(self._active.get(channel, []))
                     if not sockets:
                         continue
-                    
+
                     for ws in sockets:
                         try:
-                            await ws.send_text(data)
-                            await ws.close()
+                            await ws.send_text(payload)
+                            if close_after:
+                                await ws.close()
                         except Exception:
                             logger.debug("Failed to send WS message to one client for id %s", channel)
-                    
-                    self._active.pop(channel, None)
-                    await self.pubsub.unsubscribe(channel)
+
+                    if close_after:
+                        self._active.pop(channel, None)
+                        await self.pubsub.unsubscribe(channel)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -107,12 +116,21 @@ class ConnectionManager:
                 return json.loads(raw)
         return None
 
-    async def broadcast(self, submission_id: Union[int, str], data: dict) -> None:
+    async def broadcast(
+        self, submission_id: Union[int, str], data: dict, *, close_after: bool = True
+    ) -> None:
+        """
+        Push data to WebSocket clients subscribed to submission_id/run_id.
+        When close_after=True (default): send and close sockets (single result).
+        When close_after=False: send without closing (streaming partial results).
+        """
         channel = str(submission_id)
-        message = json.dumps(data)
+        payload = {**data, "_close": close_after}
+        message = json.dumps(payload)
 
-        # Cache first — ensures late WebSocket connections can still read the result
-        await self.cache_result(submission_id, data)
+        # Cache only on final message — late connections get the last cached result
+        if close_after:
+            await self.cache_result(submission_id, data)
 
         if self.redis:
             await self.redis.publish(channel, message)
@@ -121,10 +139,12 @@ class ConnectionManager:
             for ws in sockets:
                 try:
                     await ws.send_text(message)
-                    await ws.close()
+                    if close_after:
+                        await ws.close()
                 except Exception:
                     pass
-            self._active.pop(channel, None)
+            if close_after:
+                self._active.pop(channel, None)
 
 
 # Singleton

@@ -245,13 +245,65 @@ const ProblemDetailPage = () => {
       const ws = new WebSocket(`${WS_URL}/ws/runs/${batchId}`);
       let resolved = false;
 
+      // Streaming: accumulate results as they arrive by test_index
+      const accumulated = Array(allTests.length).fill(null);
+
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          resolved = true;
 
-          // data.results is an array matching allTests order
+          // Streaming format: single test result with test_index
+          if (typeof data.test_index === 'number') {
+            const r = {
+              status: data.status || 'Error',
+              std_out: data.std_out ?? '',
+              message: data.message || '',
+              execution_time_ms: data.execution_time_ms,
+              peak_memory_mb: data.peak_memory_mb
+            };
+            accumulated[data.test_index] = r;
+            const tab = allTests[data.test_index];
+            if (tab) {
+              setRunResults(prev => ({
+                ...prev,
+                [tab.tabId]: {
+                  status: r.status,
+                  output: r.std_out,
+                  message: r.message || '',
+                  expectedOutput: tab.expected,
+                  time: r.execution_time_ms ? `${r.execution_time_ms.toFixed(1)}ms` : '-',
+                  memory: r.peak_memory_mb ? `${r.peak_memory_mb.toFixed(1)}MB` : '-'
+                }
+              }));
+            }
+            return;
+          }
+
+          // Batch complete signal (streaming)
+          if (data._batch_complete) {
+            resolved = true;
+            // Fill any missing with Error
+            const updatedResults = {};
+            allTests.forEach((t, i) => {
+              const r = accumulated[i] || { status: 'Error', std_out: '', message: '' };
+              updatedResults[t.tabId] = {
+                status: r.status,
+                output: r.std_out,
+                message: r.message || '',
+                expectedOutput: t.expected,
+                time: r.execution_time_ms ? `${r.execution_time_ms.toFixed(1)}ms` : '-',
+                memory: r.peak_memory_mb ? `${r.peak_memory_mb.toFixed(1)}MB` : '-'
+              };
+            });
+            setRunResults(updatedResults);
+            ws.close();
+            setRunningTests(false);
+            return;
+          }
+
+          // Legacy format: single message with data.results array
           const perTestResults = data.results || [];
+          resolved = true;
           const updatedResults = {};
           allTests.forEach((t, i) => {
             const r = perTestResults[i] || { status: 'Error' };
@@ -265,14 +317,17 @@ const ProblemDetailPage = () => {
             };
           });
           setRunResults(updatedResults);
+          ws.close();
+          setRunningTests(false);
         } catch (e) {
           console.error("Failed to parse batch WS message:", e);
           const errResults = {};
           allTests.forEach(t => { errResults[t.tabId] = { status: 'Error' }; });
           setRunResults(errResults);
+          resolved = true;
+          ws.close();
+          setRunningTests(false);
         }
-        ws.close();
-        setRunningTests(false);
       };
 
       ws.onerror = () => {

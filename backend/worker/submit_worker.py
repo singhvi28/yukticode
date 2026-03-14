@@ -4,11 +4,14 @@ import asyncio
 import logging
 import msgpack
 import httpx
+import grpc
 import aio_pika
 
 # Ensure server package is importable for shared config
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+import judger_pb2
+import judger_pb2_grpc
 from Judger import judger
 from server.config import SUBMIT_QUEUE, DLX_EXCHANGE, DLX_SUBMIT_QUEUE
 
@@ -19,6 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')
+GRPC_BACKEND = os.getenv('GRPC_BACKEND', 'backend:50051')
 CALLBACK_TIMEOUT = 10      # seconds per attempt
 MAX_RETRIES = 3
 
@@ -75,15 +79,30 @@ async def submit_callback(message: aio_pika.abc.AbstractIncomingMessage):
         verdict = judge_result.get("verdict", "SYSTEM_ERROR")
         execution_time_ms = judge_result.get("execution_time_ms", 0.0)
         peak_memory_mb = judge_result.get("peak_memory_mb", 0.0)
-        message = judge_result.get("message", "")
+        submission_id = str(callback_url.rstrip("/").split("/")[-1])
 
-        logger.info("Verdict: %s (%.1fms, %.1fMB) — sending callback to %s",
-                    verdict, execution_time_ms, peak_memory_mb, callback_url)
+        logger.info("Verdict: %s (%.1fms, %.1fMB) — sending via gRPC to %s",
+                    verdict, execution_time_ms, peak_memory_mb, GRPC_BACKEND)
 
-        # Fire the callback in the background so the message is acked immediately
-        # and the worker can start processing the next submission.
-        # The result is safe in Redis cache + DB even if the callback ultimately fails.
-        asyncio.create_task(_fire_callback(callback_url, verdict, execution_time_ms, peak_memory_mb, message))
+        req = judger_pb2.SubmitVerdictRequest(
+            submission_id=submission_id,
+            status=verdict,
+            execution_time_ms=execution_time_ms,
+            peak_memory_mb=peak_memory_mb,
+        )
+        channel = grpc.aio.insecure_channel(GRPC_BACKEND)
+        try:
+            stub = judger_pb2_grpc.JudgeCoordinatorStub(channel)
+            await stub.ReportSubmitVerdict(req)
+            logger.info("Submit verdict delivered via gRPC")
+        except grpc.aio.AioRpcError as e:
+            logger.error("gRPC ReportSubmitVerdict failed: %s — falling back to HTTP", e)
+            asyncio.create_task(_fire_callback(
+                callback_url, verdict, execution_time_ms, peak_memory_mb,
+                judge_result.get("message", "")
+            ))
+        finally:
+            await channel.close()
 
 
 async def _fire_callback(callback_url: str, verdict: str, execution_time_ms: float, peak_memory_mb: float, message: str = ""):
