@@ -41,6 +41,9 @@ class BaseLanguage(ABC):
         Raises:
             TLEException: if execution exceeds time_limit.
         """
+        # 0. Clear stale output from any previous test case to prevent leakage
+        self.container.exec_run('rm -f /workspace/actual_op.txt')
+
         # 1. Initialize Isolate Box
         # We create the basic run folder to prevent Isolate's internal checks from crashing,
         # but we skip all cgroups v2 hacking.
@@ -86,10 +89,14 @@ class BaseLanguage(ABC):
 
         result = {}
         def _run():
-            ec, out = self.container.exec_run(isolate_cmd)
-            result['exit_code'] = ec
-            result['output'] = out.decode('utf-8') if out else ''
-            print(f"DEBUG ISOLATE: ec={ec}, out={result['output']}")
+            try:
+                ec, out = self.container.exec_run(isolate_cmd)
+                result['exit_code'] = ec
+                result['output'] = out.decode('utf-8') if out else ''
+                print(f"DEBUG ISOLATE: ec={ec}, out={result['output']}")
+            except Exception as exc:
+                # Store the exception so the main thread can detect the failure
+                result['error'] = exc
 
         # Use daemon thread to enforce hard timeout just in case isolate hangs entirely 
         # (though isolate itself has wall-time bounds).
@@ -100,6 +107,11 @@ class BaseLanguage(ABC):
         if thread.is_alive():
             self._cleanup_isolate()
             raise TLEException(f"Execution exceeded time limit of {time_limit_sec}s")
+
+        # If the thread died with an exception, propagate it
+        if 'error' in result:
+            self._cleanup_isolate()
+            raise RuntimeError(f"Docker exec_run failed: {result['error']}") from result['error']
 
         # 4. Read meta file to determine if TLE occurred gracefully from Isolate
         # and extract actual resource usage.

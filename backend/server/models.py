@@ -18,6 +18,18 @@ class RunRequest(BaseModel):
     callback_url: Optional[str] = None
 
 
+class RunBatchTestCase(BaseModel):
+    input: str = " "
+    expected_output: Optional[str] = None
+
+class RunBatchRequest(BaseModel):
+    language: str
+    time_limit: int
+    memory_limit: int
+    src_code: str
+    tests: list[RunBatchTestCase]
+
+
 class UserCreate(BaseModel):
     username: str
     email: str

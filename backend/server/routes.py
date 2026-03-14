@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List
 
-from .models import SubmitRequest, RunRequest
+from .models import SubmitRequest, RunRequest, RunBatchRequest
 from .messaging import RabbitMQClient
 from .config import SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, RUN_EXCHANGE, RUN_ROUTING_KEY, INTERNAL_API_URL
 from .ws import manager as ws_manager
@@ -160,6 +160,31 @@ async def run(run_request: RunRequest, request: Request):
     
     await mq.publish_message(RUN_EXCHANGE, RUN_ROUTING_KEY, body=run_payload)
     return {"msg": "run task enqueued", "run_id": run_id}
+
+
+@router.post('/run_batch')
+async def run_batch(batch_request: RunBatchRequest, request: Request):
+    """
+    Enqueue a batch of custom test runs as a single RabbitMQ message.
+    The worker will execute all tests sequentially inside one container and
+    POST a single webhook containing per-test results.
+    """
+    batch_id = str(uuid.uuid4())
+
+    callback_url = f"http://backend:9000/api/webhook/run/{batch_id}"
+
+    payload = {
+        "batch": True,
+        "language": batch_request.language,
+        "time_limit": batch_request.time_limit,
+        "memory_limit": batch_request.memory_limit,
+        "src_code": batch_request.src_code,
+        "tests": [t.model_dump() for t in batch_request.tests],
+        "callback_url": callback_url,
+    }
+
+    await mq.publish_message(RUN_EXCHANGE, RUN_ROUTING_KEY, body=payload)
+    return {"msg": "batch run enqueued", "batch_id": batch_id}
 
 @router.post('/webhook/run/{run_id}')
 async def webhook_run(run_id: str, payload: dict = Body(...)):

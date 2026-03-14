@@ -47,11 +47,45 @@ async def run_callback(message: aio_pika.abc.AbstractIncomingMessage):
         language = data["language"]
         callback_url = data["callback_url"]
 
+        # ──── Batch mode: multiple tests in one container lifecycle ────
+        if data.get("batch"):
+            tests = data.get("tests", [])
+            logger.info("Batch run: language=%s, tests=%d, callback=%s", language, len(tests), callback_url)
+
+            results = []
+            loop = asyncio.get_running_loop()
+
+            for i, tc in enumerate(tests):
+                try:
+                    judge_dict = await loop.run_in_executor(
+                        None,
+                        lambda tc=tc: judger.custom_run(
+                            language=language,
+                            time_limit=data["time_limit"],
+                            memory_limit=data["memory_limit"],
+                            src_code=data["src_code"],
+                            std_in=tc.get("input", " "),
+                        )
+                    )
+                except Exception:
+                    logger.exception("Batch test %d failed", i)
+                    judge_dict = {"verdict": "SYSTEM_ERROR", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
+
+                results.append({
+                    "status": judge_dict["verdict"],
+                    "std_out": judge_dict.get("output", ""),
+                    "execution_time_ms": judge_dict.get("execution_time_ms", 0.0),
+                    "peak_memory_mb": judge_dict.get("peak_memory_mb", 0.0),
+                })
+
+            logger.info("Batch complete — sending %d results to %s", len(results), callback_url)
+            asyncio.create_task(_fire_batch_callback(callback_url, results))
+            return
+
+        # ──── Single test mode (legacy /run) ────
         logger.info("Run worker processing: language=%s, callback=%s", language, callback_url)
 
         try:
-            # 🐛 FIX: Run the blocking judger logic in a thread pool executor.
-            # This prevents TLE/long-running code from blocking the async event loop
             loop = asyncio.get_running_loop()
             judge_dict = await loop.run_in_executor(
                 None,
@@ -76,6 +110,17 @@ async def run_callback(message: aio_pika.abc.AbstractIncomingMessage):
 
         # Fire the callback in the background so the message is acked immediately
         asyncio.create_task(_fire_callback(callback_url, judge_dict))
+
+
+async def _fire_batch_callback(callback_url: str, results: list):
+    """Best-effort delivery of batched results."""
+    try:
+        await send_callback(callback_url, {"results": results})
+    except Exception:
+        logger.exception(
+            "Batch callback permanently failed after %d retries for %s",
+            MAX_RETRIES, callback_url,
+        )
 
 
 async def _fire_callback(callback_url: str, judge_dict: dict):

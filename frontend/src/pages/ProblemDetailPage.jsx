@@ -78,8 +78,13 @@ const ProblemDetailPage = () => {
     });
   };
 
-  const WS_URL = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:9000')
-    .replace(/^http/, 'ws');
+  // Build the WebSocket base URL.
+  // - In Docker (VITE_API_URL="/api"), route to Nginx's /ws/ block directly.
+  // - In local dev (VITE_API_URL absent or absolute), do the http→ws swap.
+  const _apiBase = import.meta.env.VITE_API_URL || 'http://127.0.0.1:9000';
+  const WS_URL = _apiBase.startsWith('/')
+    ? `ws://${window.location.host}/ws`
+    : _apiBase.replace(/^http/, 'ws');
 
   const handleSubmit = async () => {
     if (!user) {
@@ -193,7 +198,7 @@ const ProblemDetailPage = () => {
     setRunningTests(true);
     setRunResults({}); // clear old results
 
-    // Gather all tests to run
+    // Gather all tests into a single batch
     const samplesToRun = (problem.samples || []).map((s, i) => ({
       tabId: `sample-${i}`,
       input: s.input,
@@ -207,102 +212,97 @@ const ProblemDetailPage = () => {
     }));
 
     const allTests = [...samplesToRun, ...customToRun];
-    let testsCompleted = 0;
 
-    const checkAllDone = () => {
-      testsCompleted += 1;
-      if (testsCompleted === allTests.length) {
+    if (allTests.length === 0) {
+      setRunningTests(false);
+      return;
+    }
+
+    // Mark all as RUNNING
+    const initialResults = {};
+    allTests.forEach(t => { initialResults[t.tabId] = { status: 'RUNNING' }; });
+    setRunResults(initialResults);
+
+    try {
+      // Single POST with all tests bundled
+      const response = await api.post('/run_batch', {
+        language: language === 'python' ? 'py' : language,
+        time_limit: Math.ceil(problem.timeLimit / 1000) || 2,
+        memory_limit: problem.memoryLimit || 256,
+        src_code: code,
+        tests: allTests.map(t => ({
+          input: t.input || " ",
+          expected_output: t.expected || null
+        }))
+      });
+
+      const batchId = response.data.batch_id;
+
+      // Listen on a single WebSocket for the aggregated results
+      const ws = new WebSocket(`${WS_URL}/ws/runs/${batchId}`);
+      let resolved = false;
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          resolved = true;
+
+          // data.results is an array matching allTests order
+          const perTestResults = data.results || [];
+          const updatedResults = {};
+          allTests.forEach((t, i) => {
+            const r = perTestResults[i] || { status: 'Error' };
+            updatedResults[t.tabId] = {
+              status: r.status,
+              output: r.std_out,
+              expectedOutput: t.expected,
+              time: r.execution_time_ms ? `${r.execution_time_ms.toFixed(1)}ms` : '-',
+              memory: r.peak_memory_mb ? `${r.peak_memory_mb.toFixed(1)}MB` : '-'
+            };
+          });
+          setRunResults(updatedResults);
+        } catch (e) {
+          console.error("Failed to parse batch WS message:", e);
+          const errResults = {};
+          allTests.forEach(t => { errResults[t.tabId] = { status: 'Error' }; });
+          setRunResults(errResults);
+        }
+        ws.close();
         setRunningTests(false);
-      }
-    };
+      };
 
-    allTests.forEach(async (testData) => {
-      // 1. Mark as running
-      setRunResults(prev => ({
-        ...prev,
-        [testData.tabId]: { status: 'RUNNING' }
-      }));
+      ws.onerror = () => {
+        if (!resolved) {
+          const errResults = {};
+          allTests.forEach(t => { errResults[t.tabId] = { status: 'Error' }; });
+          setRunResults(errResults);
+          setRunningTests(false);
+        }
+      };
 
-      try {
-        // 2. Enqueue the run task
-        const response = await api.post('/run', {
-          language: language === 'python' ? 'py' : language,
-          time_limit: Math.ceil(problem.timeLimit / 1000) || 2,
-          memory_limit: problem.memoryLimit || 256,
-          src_code: code,
-          std_in: testData.input || " " // default to single space to prevent EOF issues if empty
-        });
+      ws.onclose = () => {
+        if (!resolved) {
+          const errResults = {};
+          allTests.forEach(t => { errResults[t.tabId] = { status: 'Error' }; });
+          setRunResults(errResults);
+          setRunningTests(false);
+        }
+      };
 
-        const runId = response.data.run_id;
-
-        // 3. Listen on the new WebSocket for the result
-        const ws = new WebSocket(`${WS_URL}/ws/runs/${runId}`);
-        let resolved = false;
-
-        ws.onmessage = (event) => {
-          try {
-            const resultData = JSON.parse(event.data);
-            resolved = true;
-            setRunResults(prev => ({
-              ...prev,
-              [testData.tabId]: {
-                status: resultData.status,
-                output: resultData.std_out,
-                expectedOutput: testData.expected,
-                time: resultData.execution_time_ms ? `${resultData.execution_time_ms.toFixed(1)}ms` : '-',
-                memory: resultData.peak_memory_mb ? `${resultData.peak_memory_mb.toFixed(1)}MB` : '-'
-              }
-            }));
-          } catch (e) {
-            console.error("Failed to parse run WS message:", e);
-            setRunResults(prev => ({
-              ...prev,
-              [testData.tabId]: { status: 'Error' }
-            }));
-          }
+      // Safety timeout
+      setTimeout(() => {
+        if (!resolved) {
           ws.close();
-          checkAllDone();
-        };
+        }
+      }, 60000); // 60s for batch
 
-        ws.onerror = () => {
-          if (!resolved) {
-            setRunResults(prev => ({
-              ...prev,
-              [testData.tabId]: { status: 'Error' }
-            }));
-            checkAllDone();
-          }
-        };
-
-        ws.onclose = () => {
-          if (!resolved) {
-            setRunResults(prev => ({
-              ...prev,
-              [testData.tabId]: { status: 'Error' }
-            }));
-            checkAllDone();
-          }
-        };
-
-        // Safety timeout (worker failed silently)
-        setTimeout(() => {
-          if (!resolved) {
-            ws.close();
-            // checkAllDone is called in onclose
-          }
-        }, 30000);
-
-      } catch (err) {
-        console.error(`Run failed for ${testData.tabId}`, err);
-        setRunResults(prev => ({
-          ...prev,
-          [testData.tabId]: { status: 'Error' }
-        }));
-        checkAllDone();
-      }
-    });
-
-    if (allTests.length === 0) setRunningTests(false);
+    } catch (err) {
+      console.error("Batch run failed", err);
+      const errResults = {};
+      allTests.forEach(t => { errResults[t.tabId] = { status: 'Error' }; });
+      setRunResults(errResults);
+      setRunningTests(false);
+    }
   };
 
   if (loading) return <div className="loading-screen"><Loader size={40} className="spinner" /></div>;
