@@ -66,7 +66,7 @@ async def submit(submit_request: SubmitRequest, current_user: User = Depends(get
 
     # 4. Enqueue task for worker
     # Hardcoded internal URL bypasses Nginx to prevent path stripping issues
-    callback_url = f"http://backend:9000/api/webhook/submit/{new_submission.id}"
+    callback_url = f"http://backend:9000/webhook/submit/{new_submission.id}"
     
     payload = {
         "language": submit_request.language,
@@ -153,7 +153,7 @@ async def run(run_request: RunRequest, request: Request):
     
     # Construct the absolute internal callback URL for the worker to hit
     # Hardcoded internal URL bypasses Nginx to prevent path stripping issues
-    callback_url = f"http://backend:9000/api/webhook/run/{run_id}"
+    callback_url = f"http://backend:9000/webhook/run/{run_id}"
         
     run_payload = run_request.model_dump()
     run_payload['callback_url'] = callback_url
@@ -171,7 +171,7 @@ async def run_batch(batch_request: RunBatchRequest, request: Request):
     """
     batch_id = str(uuid.uuid4())
 
-    callback_url = f"http://backend:9000/api/webhook/run/{batch_id}"
+    callback_url = f"http://backend:9000/webhook/run/{batch_id}"
 
     payload = {
         "batch": True,

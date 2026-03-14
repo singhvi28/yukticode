@@ -109,6 +109,7 @@ def run_judger(language, time_limit, memory_limit,
             "peak_memory_mb": peak_memory_mb,
         }
 
+    container = None
     try:
         check_forbidden_patterns(language, src_code)
 
@@ -142,10 +143,6 @@ def run_judger(language, time_limit, memory_limit,
                 logger.warning("[%s] Time limit exceeded on test case %d", submission_id, i+1)
                 total_time_ms += float(time_limit)  # charge full TL
                 peak_memory_mb = max(peak_memory_mb, getattr(e, "peak_memory_mb", 0.0))
-                try:
-                    container.stop(timeout=2)
-                except Exception:
-                    pass
                 return _result("TLE")
 
             total_time_ms += elapsed_ms
@@ -173,6 +170,12 @@ def run_judger(language, time_limit, memory_limit,
             submission_id, language, time_limit, memory_limit,
         )
         return _result("SYSTEM_ERROR")
+    finally:
+        if container:
+            try:
+                container.stop(timeout=1)
+            except Exception:
+                pass
 
 
 
@@ -185,6 +188,7 @@ def custom_run(language, time_limit, memory_limit,
     verdict is one of: "AC", "TLE", "CE", "RE", "MLE", "SYSTEM_ERROR". Never raises.
     """
     submission_id = str(uuid.uuid4())
+    container = None
     try:
         check_forbidden_patterns(language, src_code)
 
@@ -206,10 +210,6 @@ def custom_run(language, time_limit, memory_limit,
             peak_mb = isolate_mem
         except TLEException as e:
             logger.warning("[%s] Time limit exceeded — stopping container", submission_id)
-            try:
-                container.stop(timeout=2)
-            except Exception:
-                pass
             return {"verdict": "TLE", "output": "", "execution_time_ms": time_limit * 1000.0, "peak_memory_mb": getattr(e, "peak_memory_mb", 0.0)}
 
         run_output = extract_file_from_container(container, "/workspace/actual_op.txt")
@@ -228,3 +228,9 @@ def custom_run(language, time_limit, memory_limit,
             submission_id, language, time_limit, memory_limit,
         )
         return {"verdict": "SYSTEM_ERROR", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
+    finally:
+        if container:
+            try:
+                container.stop(timeout=1)
+            except Exception:
+                pass
