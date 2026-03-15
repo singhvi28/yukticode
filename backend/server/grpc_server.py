@@ -19,6 +19,7 @@ from sqlalchemy.future import select
 from .ws import manager as ws_manager
 from .db.database import async_session_maker
 from server.db.models import Submission
+from server.leaderboard import update_leaderboard_on_verdict
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,10 @@ class JudgeCoordinatorServicer(judger_pb2_grpc.JudgeCoordinatorServicer):
                     submission.execution_time_ms = request.execution_time_ms
                     submission.peak_memory_mb = request.peak_memory_mb
                     await session.commit()
+                    if ws_manager.redis:
+                        await update_leaderboard_on_verdict(
+                            ws_manager.redis, session, int(request.submission_id), request.status
+                        )
         except Exception as e:
             logger.exception("Failed to update submission %s: %s", request.submission_id, e)
             context.set_code(grpc.StatusCode.INTERNAL)

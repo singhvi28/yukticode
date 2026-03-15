@@ -9,9 +9,10 @@ from .models import SubmitRequest, RunRequest, RunBatchRequest
 from .messaging import RabbitMQClient
 from .config import SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, RUN_EXCHANGE, RUN_ROUTING_KEY
 from .ws import manager as ws_manager
+from server.leaderboard import update_leaderboard_on_verdict
 
 from server.db.database import get_db_session
-from server.db.models import Problem, ProblemVersion, Submission, User, TestCase
+from server.db.models import Problem, ProblemVersion, Submission, User, TestCase, Contest, ContestProblem
 from server.auth import get_current_user
 
 router = APIRouter()
@@ -19,6 +20,8 @@ mq = RabbitMQClient()
 
 
 import uuid
+from datetime import datetime as dt
+import pytz
 from pydantic import BaseModel
 from server.blob_storage import upload_text, download_text
 from urllib.parse import quote
@@ -43,7 +46,8 @@ async def submit(submit_request: SubmitRequest, current_user: User = Depends(get
         problem_version_id=latest_version.id,
         language=submit_request.language,
         code_url=code_url,
-        status="PENDING"
+        status="PENDING",
+        contest_id=submit_request.contest_id if submit_request.contest_id else None,
     )
     db.add(new_submission)
     await db.commit()
@@ -130,6 +134,9 @@ async def webhook_submit(submission_id: int, payload: WebhookPayload, db: AsyncS
         submission.execution_time_ms = payload.execution_time_ms
         submission.peak_memory_mb = payload.peak_memory_mb
         await db.commit()
+
+        if ws_manager.redis:
+            await update_leaderboard_on_verdict(ws_manager.redis, db, submission_id, payload.status)
 
         # Push result to any open WebSocket clients
         await ws_manager.broadcast(submission_id, {
@@ -260,6 +267,26 @@ async def get_problem(problem_id: int, db: AsyncSession = Depends(get_db_session
     
     if not problem:
         raise HTTPException(status_code=404, detail="Problem not found")
+
+    # Contest freeze: if problem is part of a contest that hasn't started, block access
+    contest_stmt = (
+        select(Contest)
+        .join(ContestProblem, Contest.id == ContestProblem.contest_id)
+        .where(ContestProblem.problem_id == problem_id)
+    )
+    contest_result = await db.execute(contest_stmt)
+    linked_contests = contest_result.scalars().all()
+    current_time = dt.now(pytz.utc)
+    for contest in linked_contests:
+        if contest.start_time:
+            start_time = contest.start_time
+            if getattr(start_time, "tzinfo", None) is None:
+                start_time = pytz.utc.localize(start_time)
+            if current_time < start_time:
+                raise HTTPException(
+                    status_code=403,
+                    detail="This problem is locked until the contest starts.",
+                )
         
     # Get latest version
     stmt_version = select(ProblemVersion).where(ProblemVersion.problem_id == problem_id).order_by(ProblemVersion.version_number.desc())

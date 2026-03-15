@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .routes import router, mq
 from .auth import router as auth_router
 from .admin import router as admin_router
+from .contests_routes import router as contests_router
 from .grpc_server import start_grpc_server
 from .config import GRPC_PORT
 
@@ -40,5 +41,6 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(auth_router)
+app.include_router(contests_router)
 app.include_router(admin_router)
 

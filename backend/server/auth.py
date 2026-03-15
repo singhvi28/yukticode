@@ -19,6 +19,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 router = APIRouter(prefix="/auth", tags=["auth"])
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -56,6 +57,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     if user is None:
         raise credentials_exception
     return user
+
+
+async def get_current_user_optional(
+    token: str | None = Depends(oauth2_scheme_optional),
+    db: AsyncSession = Depends(get_db_session),
+) -> User | None:
+    """Return current user if valid token present, else None. Does not raise 401."""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if not username:
+            return None
+    except JWTError:
+        return None
+    stmt = select(User).where(User.username == username)
+    result = await db.execute(stmt)
+    return result.scalars().first()
+
 
 @router.post("/register", response_model=UserResponse)
 async def register_user(user_in: UserCreate, db: AsyncSession = Depends(get_db_session)):

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { Play, Send, Loader, Clock, Cpu, CheckCircle, XCircle, Zap, Plus, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -8,10 +8,13 @@ import { useAuth } from '../context/AuthContext';
 
 const ProblemDetailPage = () => {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const contestId = searchParams.get('contest_id');
   const { user } = useAuth();
 
   const [problem, setProblem] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [lockedMessage, setLockedMessage] = useState(null);
 
   // Editor State
   const [language, setLanguage] = useState('python');
@@ -42,23 +45,30 @@ const ProblemDetailPage = () => {
 
   useEffect(() => {
     const fetchProblem = async () => {
+      setLockedMessage(null);
       try {
         const response = await api.get(`/problems/${id}`);
         setProblem(response.data);
       } catch (err) {
         console.error("Failed to fetch problem", err);
-        // Fallback mock data
-        setProblem({
-          id,
-          title: "Two Sum",
-          timeLimit: 2000,
-          memoryLimit: 256,
-          statement: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to `target`.\n\nYou may assume that each input would have exactly one solution, and you may not use the same element twice.\n\nYou can return the answer in any order.",
-          samples: [
-            { id: 1, input: "4\n2 7 11 15\n9", output: "0 1" },
-            { id: 2, input: "3\n3 2 4\n6", output: "1 2" }
-          ]
-        });
+        if (err.response?.status === 403 && err.response?.data?.detail) {
+          setLockedMessage(err.response.data.detail === "This problem is locked until the contest starts."
+            ? "This problem is locked until the contest starts."
+            : err.response.data.detail);
+          setProblem(null);
+        } else {
+          setProblem({
+            id,
+            title: "Two Sum",
+            timeLimit: 2000,
+            memoryLimit: 256,
+            statement: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to `target`.\n\nYou may assume that each input would have exactly one solution, and you may not use the same element twice.\n\nYou can return the answer in any order.",
+            samples: [
+              { id: 1, input: "4\n2 7 11 15\n9", output: "0 1" },
+              { id: 2, input: "3\n3 2 4\n6", output: "1 2" }
+            ]
+          });
+        }
       } finally {
         setLoading(false);
       }
@@ -95,12 +105,14 @@ const ProblemDetailPage = () => {
     setResult(null);
 
     let submissionId;
+    const payload = {
+      problem_id: Number(id),
+      language: language === 'python' ? 'py' : language,
+      src_code: code
+    };
+    if (contestId) payload.contest_id = Number(contestId);
     try {
-      const response = await api.post('/submit', {
-        problem_id: Number(id),
-        language: language === 'python' ? 'py' : language,
-        src_code: code
-      });
+      const response = await api.post('/submit', payload);
       submissionId = response.data.submission_id;
     } catch (err) {
       console.error("Submission failed", err);
@@ -365,6 +377,18 @@ const ProblemDetailPage = () => {
   };
 
   if (loading) return <div className="loading-screen"><Loader size={40} className="spinner" /></div>;
+  if (lockedMessage) {
+    return (
+      <div className="problem-detail-container">
+        <div className="error-screen glass-card" style={{ padding: '2rem', maxWidth: '500px', margin: '2rem auto' }}>
+          <p style={{ color: 'var(--warning)', marginBottom: '1rem' }}>{lockedMessage}</p>
+          {contestId && (
+            <Link to={`/contests/${contestId}`} className="btn btn-primary">Back to contest</Link>
+          )}
+        </div>
+      </div>
+    );
+  }
   if (!problem) return <div className="error-screen">Problem not found</div>;
 
   return (
@@ -372,6 +396,14 @@ const ProblemDetailPage = () => {
       {/* Left Pane: Problem Description */}
       <div className="problem-pane glass-card">
         <div className="problem-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            {contestId && (
+              <>
+                <span className="contest-mode-badge" style={{ background: 'var(--success-bg)', color: 'var(--success)', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem' }}>Contest mode</span>
+                <Link to={`/contests/${contestId}`} className="btn btn-ghost btn-sm" style={{ fontSize: '0.85rem' }}>Back to contest</Link>
+              </>
+            )}
+          </div>
           <h2>{problem.id}. {problem.title}</h2>
           <div className="problem-meta">
             <span className="meta-tag"><Clock size={14} /> {problem.timeLimit}ms</span>

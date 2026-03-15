@@ -5,6 +5,7 @@ class SubmitRequest(BaseModel):
     problem_id: int
     language: str
     src_code: str
+    contest_id: Optional[int] = None
 
 
 from typing import Optional

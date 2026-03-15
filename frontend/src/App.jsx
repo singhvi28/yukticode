@@ -14,6 +14,9 @@ import ProblemsPage from './pages/ProblemsPage';
 import ProblemDetailPage from './pages/ProblemDetailPage';
 import SubmissionsPage from './pages/SubmissionsPage';
 import ProfilePage from './pages/ProfilePage';
+import ContestListPage from './pages/ContestListPage';
+import ContestArenaPage from './pages/ContestArenaPage';
+import ContestLeaderboardPage from './pages/ContestLeaderboardPage';
 
 // Admin Pages
 import AdminLayout from './pages/admin/AdminLayout';
@@ -38,6 +41,9 @@ function App() {
               <Route path="/register" element={<RegisterPage />} />
               <Route path="/problems" element={<ProblemsPage />} />
               <Route path="/problems/:id" element={<ProblemDetailPage />} />
+              <Route path="/contests" element={<ContestListPage />} />
+              <Route path="/contests/:id" element={<ContestArenaPage />} />
+              <Route path="/contests/:id/leaderboard" element={<ContestLeaderboardPage />} />
               <Route path="/submissions" element={<SubmissionsPage />} />
               <Route path="/profile" element={<ProfilePage />} />
 

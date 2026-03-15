@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 import datetime
+import pytz
 
 from server.db.database import Base
 
@@ -123,6 +124,9 @@ class Submission(Base):
     
     submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+    # If set, this submission counts toward the contest leaderboard.
+    contest_id = Column(Integer, ForeignKey("contests.id", ondelete="SET NULL"), nullable=True)
+
     # Relationships
     user = relationship("User", back_populates="submissions")
     problem_version = relationship("ProblemVersion", back_populates="submissions")
@@ -149,6 +153,20 @@ class Contest(Base):
     # Relationships
     creator = relationship("User", back_populates="contests_created")
     contest_problems = relationship("ContestProblem", back_populates="contest", cascade="all, delete-orphan")
+    registrations = relationship("ContestRegistration", back_populates="contest", cascade="all, delete-orphan")
+
+
+class ContestRegistration(Base):
+    """Tracks which users have registered for a contest."""
+    __tablename__ = "contest_registrations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    contest_id = Column(Integer, ForeignKey("contests.id", ondelete="CASCADE"), nullable=False)
+    registered_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(pytz.utc))
+
+    user = relationship("User", backref="contest_registrations")
+    contest = relationship("Contest", back_populates="registrations")
 
 
 class ContestProblem(Base):
