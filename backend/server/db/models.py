@@ -1,7 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 import datetime
-import pytz
 
 from server.db.database import Base
 
@@ -16,11 +15,11 @@ class User(Base):
     username = Column(String(50), unique=True, index=True, nullable=False)
     email = Column(String(100), unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    
+
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
-    
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
     total_submissions = Column(Integer, default=0)
     rating = Column(Integer, default=1500)
 
@@ -40,10 +39,10 @@ class Problem(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(100), nullable=False, unique=True)
     author_id = Column(Integer, ForeignKey("users.id"))
-    
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
     is_published = Column(Boolean, default=False)
-    
+
     difficulty = Column(String(20), default="Medium")
     tags = Column(String, default="[]")  # Stored as JSON string
 
@@ -54,24 +53,24 @@ class Problem(Base):
 
 class ProblemVersion(Base):
     """
-    Represents a specific snapshot of a problem: its description (markdown), 
+    Represents a specific snapshot of a problem: its description (markdown),
     and resource constraints. Ensures submissions are judged against correct historical context.
     """
     __tablename__ = "problem_versions"
 
     id = Column(Integer, primary_key=True, index=True)
     problem_id = Column(Integer, ForeignKey("problems.id"), nullable=False)
-    
+
     # Versioning info
     version_number = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
+
     # Specification
     statement_url = Column(String, nullable=False)
     time_limit_ms = Column(Integer, default=2000)
     memory_limit_mb = Column(Integer, default=256)
-    
-    # Relative path reference to where the physical I/O test cases are stored 
+
+    # Relative path reference to where the physical I/O test cases are stored
     # (e.g., "/test_data/problem_1/v2")
     test_data_path = Column(String, nullable=False)
 
@@ -89,10 +88,10 @@ class TestCase(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     problem_version_id = Column(Integer, ForeignKey("problem_versions.id"), nullable=False)
-    
+
     input_data = Column(Text, nullable=False)
     expected_output = Column(Text, nullable=False)
-    
+
     is_sample = Column(Boolean, default=False)
     score = Column(Integer, default=10)
 
@@ -107,22 +106,22 @@ class Submission(Base):
     __tablename__ = "submissions"
 
     id = Column(Integer, primary_key=True, index=True)
-    
+
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     problem_version_id = Column(Integer, ForeignKey("problem_versions.id"), nullable=False)
-    
+
     language = Column(String(20), nullable=False)
     code_url = Column(String, nullable=False)
-    
+
     # Verdict/Statistics
     status = Column(String(20), default="PENDING")  # e.g., PENDING, AC, WA, CE, TLE, MLE, RE
     execution_time_ms = Column(Float, nullable=True)
     peak_memory_mb = Column(Float, nullable=True)
-    
+
     # E.g callback tracking if needed
     callback_url = Column(String, nullable=True)
-    
-    submitted_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    submitted_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
 
     # If set, this submission counts toward the contest leaderboard.
     contest_id = Column(Integer, ForeignKey("contests.id", ondelete="SET NULL"), nullable=True)
@@ -142,11 +141,11 @@ class Contest(Base):
     title = Column(String(150), nullable=False, unique=True)
     description = Column(Text, default="")
 
-    start_time = Column(DateTime, nullable=True)
-    end_time = Column(DateTime, nullable=True)
+    start_time = Column(DateTime(timezone=True), nullable=True)
+    end_time = Column(DateTime(timezone=True), nullable=True)
 
     is_published = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
 
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
 
@@ -163,7 +162,7 @@ class ContestRegistration(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     contest_id = Column(Integer, ForeignKey("contests.id", ondelete="CASCADE"), nullable=False)
-    registered_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(pytz.utc))
+    registered_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
 
     user = relationship("User", backref="contest_registrations")
     contest = relationship("Contest", back_populates="registrations")

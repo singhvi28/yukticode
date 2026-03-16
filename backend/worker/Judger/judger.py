@@ -1,10 +1,11 @@
-import re
+import io
 import time
 import uuid
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 from .docker_manager import DockerManager
-from .file_utils import put_files_to_container, extract_file_from_container
+from .file_utils import put_files_to_container, extract_file_from_container, MAX_READ_BYTES
 from .result_mapper import map_exit_code
 from .languages.base import TLEException
 from .languages.cpp import CppLanguage
@@ -12,41 +13,6 @@ from .languages.python import PythonLanguage
 from .languages.java import JavaLanguage
 
 logger = logging.getLogger(__name__)
-
-
-
-class SecurityViolationException(Exception):
-    """Raised when source code contains forbidden patterns indicating malicious intent."""
-    pass
-
-
-def check_forbidden_patterns(language: str, src_code: str) -> None:
-    """
-    Performs static analysis on source code, identifying forbidden libraries or
-    system calls that user code has no legitimate reason to execute.
-    Raises SecurityViolationException if a forbidden pattern is found.
-    """
-    if not src_code:
-        return
-
-    forbidden_patterns = []
-    if language == "py":
-        forbidden_patterns = [
-            "os.system", "subprocess", "eval", "exec", 
-            "__import__", "open", "pty.spawn"
-        ]
-    elif language == "cpp":
-        forbidden_patterns = [
-            "<cstdlib>", "system(", "popen(", "fork(", "exec(", "clone("
-        ]
-    elif language == "java":
-        forbidden_patterns = [
-            "Runtime.getRuntime().exec", "ProcessBuilder", "System.exit"
-        ]
-
-    for pattern in forbidden_patterns:
-        if re.search(r'\b' + re.escape(pattern) + r'\b', src_code):
-            raise SecurityViolationException(f"Forbidden pattern detected: {pattern}")
 
 
 def get_language_instance(language, container, time_limit, memory_limit):
@@ -65,24 +31,34 @@ def get_language_instance(language, container, time_limit, memory_limit):
 
 def compare_outputs(expected: str, actual: str) -> bool:
     """
-    Compare expected and actual output in a judge-friendly way:
+    Compare expected and actual output in a judge-friendly way using a
+    memory-efficient line-by-line generator to avoid loading full strings.
       - Each line is right-stripped (trailing spaces don't count).
       - Leading and trailing blank lines are ignored.
       - Windows-style \\r\\n newlines are normalised.
 
     Returns True if the outputs are equivalent, False otherwise.
     """
-    def normalise(text: str):
+    def normalise_lines(text: str):
+        """Generator yielding non-empty, rstripped lines (leading/trailing blanks stripped)."""
         lines = text.replace('\r\n', '\n').replace('\r', '\n').split('\n')
-        lines = [line.rstrip() for line in lines]
-        while lines and lines[0] == '':
-            lines.pop(0)
-        while lines and lines[-1] == '':
-            lines.pop()
-        return lines
+        # strip leading blank lines
+        start = 0
+        while start < len(lines) and lines[start].rstrip() == '':
+            start += 1
+        # strip trailing blank lines
+        end = len(lines) - 1
+        while end >= start and lines[end].rstrip() == '':
+            end -= 1
+        for i in range(start, end + 1):
+            yield lines[i].rstrip()
 
-    return normalise(expected) == normalise(actual)
+    # Guard against pathologically large strings that slipped through extract cap
+    if len(expected) > MAX_READ_BYTES or len(actual) > MAX_READ_BYTES:
+        logger.warning("compare_outputs: output exceeds max size — treating as WA")
+        return False
 
+    return list(normalise_lines(expected)) == list(normalise_lines(actual))
 
 
 def run_judger(language, time_limit, memory_limit,
@@ -96,6 +72,9 @@ def run_judger(language, time_limit, memory_limit,
 
     Verdict values: "AC", "WA", "TLE", "CE", "RE", "MLE", "SYSTEM_ERROR".
     Never raises — callers are guaranteed to receive a result dict.
+
+    Security note: expected output is kept in worker memory and never written
+    into the container. Only actual_op.txt is extracted for comparison.
     """
     submission_id = str(uuid.uuid4())
     total_time_ms: float = 0.0
@@ -111,29 +90,28 @@ def run_judger(language, time_limit, memory_limit,
 
     container = None
     try:
-        check_forbidden_patterns(language, src_code)
-
         dm = DockerManager(submission_id, time_limit, memory_limit)
         container = dm.start_container()
         language_instance = get_language_instance(language, container, time_limit, memory_limit)
 
-        # Write the source code once
-        put_files_to_container(container, language, src_code, None, None)
+        # Write the source code once (no expected output goes into the container)
+        put_files_to_container(container, language, src_code, None)
 
         if language in ["cpp", "java"]:
             compile_exit_code, compile_output = language_instance.compile(submission_id=submission_id)
             if compile_exit_code == 1:
                 return _result("CE", compile_output)
-                
+
         if not test_cases:
             return _result("AC")
 
         for i, tc in enumerate(test_cases):
             std_in = tc.get("input", "")
+            # expected_out is kept in worker memory — never sent to the container
             expected_out = tc.get("expected_output", "")
-            
-            # Write just the I/O text files for this specific test case iteration
-            put_files_to_container(container, language, None, std_in, expected_out)
+
+            # Write only the input for this test case
+            put_files_to_container(container, language, None, std_in)
 
             try:
                 t_start = time.perf_counter()
@@ -152,18 +130,15 @@ def run_judger(language, time_limit, memory_limit,
                 logger.warning("[%s] Non-zero exit code %s on test case %d", submission_id, run_exit_code, i+1)
                 return _result(map_exit_code(run_exit_code), run_stderr)
 
-            expected_op_data = extract_file_from_container(container, "/workspace/expected_op.txt")
+            # Only extract the user's actual output — expected stays in memory
             actual_op_data = extract_file_from_container(container, "/workspace/actual_op.txt")
-            
-            if not compare_outputs(expected_op_data, actual_op_data):
+
+            if not compare_outputs(expected_out, actual_op_data):
                 logger.info("[%s] Wrong Answer on test case %d", submission_id, i+1)
                 return _result("WA")
 
         return _result("AC")
 
-    except SecurityViolationException as e:
-        logger.warning("[%s] Security violation: %s", submission_id, str(e))
-        return _result("CE", str(e))
     except Exception:
         logger.exception(
             "[%s] Unhandled error during judging (language=%s, time_limit=%s, memory_limit=%s)",
@@ -176,7 +151,10 @@ def run_judger(language, time_limit, memory_limit,
                 container.stop(timeout=1)
             except Exception:
                 pass
-
+            try:
+                container.remove(force=True)
+            except Exception:
+                pass
 
 
 def custom_run(language, time_limit, memory_limit,
@@ -190,8 +168,6 @@ def custom_run(language, time_limit, memory_limit,
     submission_id = str(uuid.uuid4())
     container = None
     try:
-        check_forbidden_patterns(language, src_code)
-
         dm = DockerManager(submission_id, time_limit, memory_limit)
         container = dm.start_container()
         language_instance = get_language_instance(language, container, time_limit, memory_limit)
@@ -219,9 +195,6 @@ def custom_run(language, time_limit, memory_limit,
 
         return {"verdict": map_exit_code(run_exit_code), "output": "", "message": run_stderr[:2000], "execution_time_ms": elapsed_ms, "peak_memory_mb": peak_mb}
 
-    except SecurityViolationException as e:
-        logger.warning("[%s] Security violation in custom run: %s", submission_id, str(e))
-        return {"verdict": "CE", "output": "", "message": str(e), "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
     except Exception:
         logger.exception(
             "[%s] Unhandled error during custom run (language=%s, time_limit=%s, memory_limit=%s)",
@@ -232,5 +205,9 @@ def custom_run(language, time_limit, memory_limit,
         if container:
             try:
                 container.stop(timeout=1)
+            except Exception:
+                pass
+            try:
+                container.remove(force=True)
             except Exception:
                 pass

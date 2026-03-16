@@ -43,9 +43,11 @@ class DockerManager:
             network_disabled=True,
             cap_add=["SYS_ADMIN", "NET_ADMIN"],   # Required for Isolate namespaces
             security_opt=["apparmor=unconfined"], # Required for Isolate bind mounts
+            pids_limit=64,   # Prevent fork-bomb / PID table exhaustion on host
             stderr=True,
             stdout=True,
-            auto_remove=True,
+            # auto_remove intentionally omitted — judger.py finally block calls
+            # container.remove(force=True) explicitly for reliable cleanup.
         )
 
         return container

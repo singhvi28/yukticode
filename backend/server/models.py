@@ -1,33 +1,32 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Optional
 
 
 class SubmitRequest(BaseModel):
     problem_id: int
     language: str
-    src_code: str
+    src_code: str = Field(..., max_length=65536)
     contest_id: Optional[int] = None
 
-
-from typing import Optional
 
 class RunRequest(BaseModel):
     language: str
     time_limit: int
     memory_limit: int
-    src_code: str
+    src_code: str = Field(..., max_length=65536)
     std_in: str = " "
     callback_url: Optional[str] = None
 
 
 class RunBatchTestCase(BaseModel):
-    input: str = " "
-    expected_output: Optional[str] = None
+    input: str = Field(default=" ", max_length=1_000_000)
+    expected_output: Optional[str] = Field(default=None, max_length=1_000_000)
 
 class RunBatchRequest(BaseModel):
     language: str
     time_limit: int
     memory_limit: int
-    src_code: str
+    src_code: str = Field(..., max_length=65536)
     tests: list[RunBatchTestCase]
 
 

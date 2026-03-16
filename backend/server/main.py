@@ -2,17 +2,22 @@ import contextlib
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routes import router, mq
+from .routes import router
 from .auth import router as auth_router
 from .admin import router as admin_router
 from .contests_routes import router as contests_router
 from .grpc_server import start_grpc_server
 from .config import GRPC_PORT
+from .messaging import RabbitMQClient
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup — instantiate mq inside the lifespan so it binds to the correct
+    # event loop at startup, avoiding RuntimeError on multi-worker deployments.
+    mq = RabbitMQClient()
     await mq.connect()
+    app.state.mq = mq
+
     from .ws import manager as ws_manager
     await ws_manager.startup()
     grpc_server = await start_grpc_server(port=GRPC_PORT)
@@ -29,7 +34,7 @@ app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173", 
+        "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost",
         "http://127.0.0.1"
@@ -43,4 +48,3 @@ app.include_router(router)
 app.include_router(auth_router)
 app.include_router(contests_router)
 app.include_router(admin_router)
-

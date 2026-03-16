@@ -3,6 +3,11 @@ import os
 # RabbitMQ connection parameters
 RABBITMQ_HOST = 'localhost'
 
+# Shared secret for HMAC-SHA256 webhook authentication.
+# The worker signs the payload; the API server verifies it.
+# Set a strong random value in production (e.g. openssl rand -hex 32).
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
+
 # Internal API URL for workers to reach the backend
 INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://127.0.0.1:9000")
 
