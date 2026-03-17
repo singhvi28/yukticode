@@ -18,16 +18,12 @@ class PythonLanguage(BaseLanguage):
     def run(self, submission_id):
         """
         Run the Python script, feeding /workspace/input.txt as stdin and
-        writing stdout to /workspace/actual_op.txt.
-
-        Uses BaseLanguage.run_with_timeout for a Python-level deadline.
+        writing stdout to /workspace/actual_op.txt via run_with_gvisor.
 
         Returns:
-            (exit_code, run_output)
+            (exit_code, "", execution_time_ms, peak_memory_mb, stderr)
         Raises:
-            TLEException: if execution exceeds self.time_limit seconds.
+            TLEException: if execution exceeds self.time_limit milliseconds.
         """
-        # Isolate runs in its own root, the workspace files are mapped into the current 
-        # working directory of Isolate (the box directory).
-        run_cmd = "/usr/bin/python3 main.py"
-        return self.run_with_isolate(run_cmd, self.time_limit, self.memory_limit)
+        process_cmd = "/usr/bin/python3 /workspace/main.py"
+        return self.run_with_gvisor(process_cmd, self.time_limit, self.memory_limit)

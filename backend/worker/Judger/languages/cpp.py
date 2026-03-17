@@ -18,24 +18,19 @@ class CppLanguage(BaseLanguage):
         Returns:
             (exit_code, compile_output)
         """
-        compile_cmd = (
-            f"/bin/sh -c 'g++ -O2 -o /workspace/UserProgram /workspace/main.cpp'"
-        )
+        compile_cmd = "/bin/sh -c 'g++ -O2 -o /workspace/UserProgram /workspace/main.cpp'"
         exit_code, output = self.container.exec_run(compile_cmd)
         return exit_code, output.decode('utf-8') if output else ''
 
     def run(self, submission_id):
         """
         Run the compiled binary, feeding /workspace/input.txt as stdin and
-        writing stdout to /workspace/actual_op.txt.
-
-        Uses BaseLanguage.run_with_timeout for a Python-level deadline.
+        writing stdout to /workspace/actual_op.txt via run_with_gvisor.
 
         Returns:
-            (exit_code, run_output)
+            (exit_code, "", execution_time_ms, peak_memory_mb, stderr)
         Raises:
-            TLEException: if execution exceeds self.time_limit seconds.
+            TLEException: if execution exceeds self.time_limit milliseconds.
         """
-        # The UserProgram is mapped into Isolate's root.
-        run_cmd = "./UserProgram"
-        return self.run_with_isolate(run_cmd, self.time_limit, self.memory_limit)
+        process_cmd = "/workspace/UserProgram"
+        return self.run_with_gvisor(process_cmd, self.time_limit, self.memory_limit)
