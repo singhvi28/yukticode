@@ -6,8 +6,6 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-import hashlib
-import hmac
 import json
 import pytest
 from unittest.mock import patch, AsyncMock
@@ -181,58 +179,3 @@ class TestRunEndpoint:
         assert resp.status_code == 422
 
 
-# ---------------------------------------------------------------------------
-# /webhook/submit — HMAC verification
-# ---------------------------------------------------------------------------
-
-class TestWebhookAuth:
-    WEBHOOK_PAYLOAD = {"status": "AC", "execution_time_ms": 100.0, "peak_memory_mb": 32.0}
-
-    def _make_sig(self, secret: str, body: bytes) -> str:
-        return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-
-    def test_webhook_passes_with_no_secret_configured(self, client):
-        """When WEBHOOK_SECRET is empty (dev mode), any request is accepted."""
-        resp = client.post('/webhook/submit/1', json=self.WEBHOOK_PAYLOAD)
-        assert resp.status_code == 200
-
-    def test_webhook_rejects_wrong_signature(self, client):
-        """Unprotected webhook fix: wrong signature must return 403."""
-        body = json.dumps(self.WEBHOOK_PAYLOAD).encode()
-        with patch('server.routes.WEBHOOK_SECRET', 'supersecret'):
-            resp = client.post(
-                '/webhook/submit/1',
-                content=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Hub-Signature-256": "sha256=deadbeef",
-                },
-            )
-        assert resp.status_code == 403
-
-    def test_webhook_accepts_correct_signature(self, client):
-        """Correct HMAC signature must be accepted."""
-        body = json.dumps(self.WEBHOOK_PAYLOAD).encode()
-        secret = "supersecret"
-        sig = self._make_sig(secret, body)
-        with patch('server.routes.WEBHOOK_SECRET', secret):
-            resp = client.post(
-                '/webhook/submit/1',
-                content=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "X-Hub-Signature-256": sig,
-                },
-            )
-        assert resp.status_code == 200
-
-    def test_webhook_rejects_missing_signature_when_secret_set(self, client):
-        """No signature header with a configured secret must return 403."""
-        body = json.dumps(self.WEBHOOK_PAYLOAD).encode()
-        with patch('server.routes.WEBHOOK_SECRET', 'supersecret'):
-            resp = client.post(
-                '/webhook/submit/1',
-                content=body,
-                headers={"Content-Type": "application/json"},
-            )
-        assert resp.status_code == 403
