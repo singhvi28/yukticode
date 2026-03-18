@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -5,7 +6,7 @@ import uuid
 from datetime import datetime as dt
 import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Request, Body
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, Request, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -121,32 +122,27 @@ async def submit(
 @router.websocket("/ws/submissions/{submission_id}")
 async def ws_submission_status(submission_id: int, websocket: WebSocket):
     """
-    Push-based alternative to polling /submissions/{id}.
-    After connecting, we first check Redis for a cached result (race-condition
-    fix). If the worker already finished, the client gets the result
-    immediately and the socket closes.
+    Push-based verdict delivery.
+
+    connect() registers the socket and returns a done_event that is set
+    by ws_manager.broadcast() once the final verdict is delivered server-side.
+    If the client disconnects early (page refresh / navigation),
+    disconnect() sets the event too, so this coroutine never leaks.
     """
-    await ws_manager.connect(submission_id, websocket)
+    done_event = await ws_manager.connect(submission_id, websocket)
     try:
-        # Check if the result is already cached (worker beat us)
+        # Race-condition fix: verdict may have arrived before we connected.
         cached = await ws_manager.get_cached_result(submission_id)
         if cached:
             await websocket.send_text(json.dumps(cached))
             await websocket.close()
             return
 
-        # Otherwise wait for the broadcast from the webhook handler.
-        # The server will close the socket once a final verdict is broadcast.
-        while True:
-            try:
-                msg = await websocket.receive_text()
-                # A sentinel "__done__" is sent by ws_manager.broadcast after
-                # delivering the verdict so the server can break without relying
-                # on the client to close the connection (Zombie WebSocket fix).
-                if msg == "__done__":
-                    break
-            except WebSocketDisconnect:
-                break
+        # Wait until broadcast() or disconnect() sets the event.
+        try:
+            await done_event.wait()
+        except asyncio.CancelledError:
+            pass
     finally:
         ws_manager.disconnect(submission_id, websocket)
 
@@ -270,26 +266,25 @@ async def webhook_run(run_id: str, payload: dict = Body(...)):
 @router.websocket("/ws/runs/{run_id}")
 async def websocket_run(websocket: WebSocket, run_id: str):
     """
-    Clients connect here after calling POST /run to receive real-time execution results.
-    Checks Redis cache first in case the worker already finished.
+    Clients connect here after calling POST /run or POST /run_batch.
+
+    For batch runs, broadcast() is called with close_after=False for each
+    partial test result, and close_after=True on _batch_complete. The
+    done_event is only set on that final close, so the socket stays open
+    for the full stream without any client-sent messages required.
     """
-    await ws_manager.connect(run_id, websocket)
+    done_event = await ws_manager.connect(run_id, websocket)
     try:
-        # Check if the result is already cached (worker beat us)
         cached = await ws_manager.get_cached_result(run_id)
         if cached:
             await websocket.send_text(json.dumps(cached))
             await websocket.close()
             return
 
-        # Wait for the broadcast; sentinel breaks the loop (Zombie WebSocket fix)
-        while True:
-            try:
-                msg = await websocket.receive_text()
-                if msg == "__done__":
-                    break
-            except WebSocketDisconnect:
-                break
+        try:
+            await done_event.wait()
+        except asyncio.CancelledError:
+            pass
     finally:
         ws_manager.disconnect(run_id, websocket)
 
