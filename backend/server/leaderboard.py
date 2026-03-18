@@ -78,8 +78,12 @@ class ContestLeaderboardManager:
 
         combined_zset_score = (new_score * 1_000_000) - new_penalty
         await self.redis.zadd(lb_key, {str(user_id): combined_zset_score})
-        # Notify SSE listeners that leaderboard changed
-        await self.redis.publish(f"contest:{contest_id}:leaderboard_updates", "1")
+        # Notify SSE listeners that leaderboard changed by sending the pre-computed data
+        lb_data = await self.get_live_leaderboard(contest_id, limit=100)
+        await self.redis.publish(
+            f"contest:{contest_id}:leaderboard_updates", 
+            json.dumps({"leaderboard": lb_data})
+        )
 
     async def get_live_leaderboard(self, contest_id: int, limit: int = 100):
         lb_key = f"contest:{contest_id}:leaderboard"

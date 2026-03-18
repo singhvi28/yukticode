@@ -166,7 +166,10 @@ async def _leaderboard_sse_stream(contest_id: int):
         try:
             async for message in pubsub.listen():
                 if message.get("type") == "message":
-                    queue.put_nowait("update")
+                    raw_data = message["data"]
+                    if isinstance(raw_data, bytes):
+                        raw_data = raw_data.decode("utf-8")
+                    queue.put_nowait({"type": "update", "data": raw_data})
         except asyncio.CancelledError:
             pass
         finally:
@@ -177,24 +180,31 @@ async def _leaderboard_sse_stream(contest_id: int):
         try:
             while True:
                 await asyncio.sleep(HEARTBEAT_INTERVAL)
-                queue.put_nowait("heartbeat")
+                queue.put_nowait({"type": "heartbeat"})
         except asyncio.CancelledError:
             pass
 
     # Initial snapshot
     data = await lb_manager.get_live_leaderboard(contest_id=contest_id, limit=100)
-    yield f"event: snapshot\ndata: {json.dumps({'leaderboard': data})}\n\n"
+    cached_payload = json.dumps({'leaderboard': data})
+    yield f"event: snapshot\ndata: {cached_payload}\n\n"
 
     listener_task = asyncio.create_task(listener())
     heartbeat_task = asyncio.create_task(heartbeat())
     try:
         while True:
             try:
-                await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL + 2)
+                msg = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL + 2)
             except asyncio.TimeoutError:
-                pass
-            data = await lb_manager.get_live_leaderboard(contest_id=contest_id, limit=100)
-            yield f"event: update\ndata: {json.dumps({'leaderboard': data})}\n\n"
+                msg = {"type": "heartbeat"}
+            
+            if msg.get("type") == "heartbeat":
+                # Keep alive the connection with the last known snapshot
+                yield f"event: update\ndata: {cached_payload}\n\n"
+            else:
+                # Update local cache and stream fresh JSON sent directly from the worker (Redis pubsub)
+                cached_payload = msg["data"]
+                yield f"event: update\ndata: {cached_payload}\n\n"
     finally:
         listener_task.cancel()
         heartbeat_task.cancel()
