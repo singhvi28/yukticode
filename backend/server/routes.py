@@ -151,10 +151,7 @@ async def ws_submission_status(submission_id: int, websocket: WebSocket):
 # Webhook — called by the worker when judging is complete
 # ---------------------------------------------------------------------------
 
-class WebhookPayload(BaseModel):
-    status: str
-    execution_time_ms: float = 0.0
-    peak_memory_mb: float = 0.0
+
 
 def _verify_webhook_signature(request_body: bytes, signature_header: str) -> bool:
     """
@@ -173,7 +170,6 @@ def _verify_webhook_signature(request_body: bytes, signature_header: str) -> boo
 async def webhook_submit(
     submission_id: int,
     request: Request,
-    payload: WebhookPayload,
     db: AsyncSession = Depends(get_db_session),
 ):
     # Verify HMAC signature to prevent unauthenticated verdict injection
@@ -182,24 +178,30 @@ async def webhook_submit(
     if not _verify_webhook_signature(raw_body, sig):
         raise HTTPException(status_code=403, detail="Invalid webhook signature")
 
+    # Manually parse the JSON after reading the body stream
+    payload_dict = json.loads(raw_body)
+    status = payload_dict.get("status")
+    execution_time_ms = payload_dict.get("execution_time_ms", 0.0)
+    peak_memory_mb = payload_dict.get("peak_memory_mb", 0.0)
+
     stmt = select(Submission).where(Submission.id == submission_id)
     result = await db.execute(stmt)
     submission = result.scalars().first()
 
     if submission:
-        submission.status = payload.status
-        submission.execution_time_ms = payload.execution_time_ms
-        submission.peak_memory_mb = payload.peak_memory_mb
+        submission.status = status
+        submission.execution_time_ms = execution_time_ms
+        submission.peak_memory_mb = peak_memory_mb
         await db.commit()
 
         if ws_manager.redis:
-            await update_leaderboard_on_verdict(ws_manager.redis, db, submission_id, payload.status)
+            await update_leaderboard_on_verdict(ws_manager.redis, db, submission_id, status)
 
         # Push result to any open WebSocket clients
         await ws_manager.broadcast(submission_id, {
-            "status": payload.status,
-            "execution_time_ms": payload.execution_time_ms,
-            "peak_memory_mb": payload.peak_memory_mb,
+            "status": status,
+            "execution_time_ms": execution_time_ms,
+            "peak_memory_mb": peak_memory_mb,
         })
 
     return {"msg": "ok"}
@@ -212,16 +214,13 @@ async def webhook_submit(
 @router.post('/run')
 async def run(run_request: RunRequest, request: Request):
     """
-    Enqueue a custom run execution. Generates a unique run_id, attaches the webhook
-    callback URL, and pushes the payload to RabbitMQ.
+    Enqueue a custom run execution. Generates a unique run_id and pushes the
+    payload to RabbitMQ. The worker reports the verdict via gRPC using run_id.
     """
     run_id = str(uuid.uuid4())
 
-    # Hardcoded internal URL bypasses Nginx to prevent path stripping issues
-    callback_url = f"http://backend:9000/webhook/run/{run_id}"
-
     run_payload = run_request.model_dump()
-    run_payload['callback_url'] = callback_url
+    run_payload['run_id'] = run_id
 
     mq = request.app.state.mq
     await mq.publish_message(RUN_EXCHANGE, RUN_ROUTING_KEY, body=run_payload)
@@ -232,22 +231,19 @@ async def run(run_request: RunRequest, request: Request):
 async def run_batch(batch_request: RunBatchRequest, request: Request):
     """
     Enqueue a batch of custom test runs as a single RabbitMQ message.
-    The worker will execute all tests sequentially inside one container and
-    POST a single webhook containing per-test results.
+    The worker executes all tests and streams per-test results via gRPC
+    using batch_id as the correlation key for WebSocket clients.
     """
     batch_id = str(uuid.uuid4())
 
-    # Hardcoded internal URL bypasses Nginx to prevent path stripping issues
-    callback_url = f"http://backend:9000/webhook/run/{batch_id}"
-
     payload = {
         "batch": True,
+        "batch_id": batch_id,
         "language": batch_request.language,
         "time_limit": batch_request.time_limit,
         "memory_limit": batch_request.memory_limit,
         "src_code": batch_request.src_code,
         "tests": [t.model_dump() for t in batch_request.tests],
-        "callback_url": callback_url,
     }
 
     mq = request.app.state.mq

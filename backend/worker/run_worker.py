@@ -48,9 +48,15 @@ async def run_callback(message: aio_pika.abc.AbstractIncomingMessage):
                         logger.exception("Batch test %d failed", i)
                         res = {"verdict": "SYSTEM_ERROR", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
 
+                    verdict = res.get("verdict", "SYSTEM_ERROR")
+                    expected_output = tc.get("expected_output")
+                    if verdict == "AC" and expected_output is not None:
+                        if not judger.compare_outputs(expected_output, res.get("output", "")):
+                            verdict = "WA"
+
                     yield {
                         "test_index": i,
-                        "status": res.get("verdict", "SYSTEM_ERROR"),
+                        "status": verdict,
                         "std_out": res.get("output", ""),
                         "time_ms": res.get("execution_time_ms", 0.0),
                         "mem_mb": res.get("peak_memory_mb", 0.0),

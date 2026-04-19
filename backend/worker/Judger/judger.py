@@ -99,7 +99,7 @@ def run_judger(language, time_limit, memory_limit,
 
         if language in ["cpp", "java"]:
             compile_exit_code, compile_output = language_instance.compile(submission_id=submission_id)
-            if compile_exit_code == 1:
+            if compile_exit_code != 0:
                 return _result("CE", compile_output)
 
         if not test_cases:
@@ -176,7 +176,7 @@ def custom_run(language, time_limit, memory_limit,
 
         if language in ["cpp", "java"]:
             compile_exit_code, compile_output = language_instance.compile(submission_id=submission_id)
-            if compile_exit_code == 1:
+            if compile_exit_code != 0:
                 return {"verdict": "CE", "output": "", "message": compile_output[:2000], "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
 
         start_time = time.perf_counter()
@@ -186,7 +186,8 @@ def custom_run(language, time_limit, memory_limit,
             peak_mb = isolate_mem
         except TLEException as e:
             logger.warning("[%s] Time limit exceeded — stopping container", submission_id)
-            return {"verdict": "TLE", "output": "", "message": "", "execution_time_ms": time_limit * 1000.0, "peak_memory_mb": getattr(e, "peak_memory_mb", 0.0)}
+            # time_limit is already in milliseconds (same units as execution_time_ms)
+            return {"verdict": "TLE", "output": "", "message": "", "execution_time_ms": float(time_limit), "peak_memory_mb": getattr(e, "peak_memory_mb", 0.0)}
 
         run_output = extract_file_from_container(container, "/workspace/actual_op.txt")
 

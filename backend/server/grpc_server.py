@@ -4,6 +4,7 @@ gRPC Judge Coordinator service.
 Receives verdicts from workers over gRPC and broadcasts them to WebSocket clients.
 Eliminates HTTP callback overhead and enables streaming batch results.
 """
+import json
 import logging
 import sys
 import os
@@ -57,14 +58,46 @@ class JudgeCoordinatorServicer(judger_pb2_grpc.JudgeCoordinatorServicer):
         return judger_pb2.ReportResponse(success=True, message="OK")
 
     async def ReportRunVerdict(self, request, context):
-        """Handles single custom run (POST /run) callbacks."""
-        await ws_manager.broadcast(request.run_id, {
+        """Handles single custom run (POST /run) and admin dry-run results."""
+        payload = {
             "test_index": 0,
             "status": request.status,
             "std_out": request.std_out,
             "execution_time_ms": request.execution_time_ms,
             "peak_memory_mb": request.peak_memory_mb,
-        })
+        }
+
+        # Admin dry-run: compare against expected output stored in Redis
+        if ws_manager.redis:
+            raw = await ws_manager.redis.get(f"admin_run:{request.run_id}")
+            if raw:
+                pending = json.loads(raw)
+                expected = pending.get("expected_output", "")
+                if request.status != "AC":
+                    verdict = request.status
+                else:
+                    def _norm(s: str) -> str:
+                        return "\n".join(l.rstrip() for l in s.strip().splitlines())
+                    verdict = "AC" if _norm(request.std_out) == _norm(expected) else "WA"
+
+                result_data = {
+                    "worker_status": request.status,
+                    "verdict": verdict,
+                    "status": verdict,
+                    "std_out": request.std_out,
+                    "expected": expected,
+                    "message": "",
+                    "execution_time_ms": request.execution_time_ms,
+                    "peak_memory_mb": request.peak_memory_mb,
+                }
+                await ws_manager.redis.set(
+                    f"admin_result:{request.run_id}", json.dumps(result_data), ex=60
+                )
+                await ws_manager.redis.delete(f"admin_run:{request.run_id}")
+                await ws_manager.broadcast(request.run_id, result_data)
+                return judger_pb2.ReportResponse(success=True, message="OK")
+
+        await ws_manager.broadcast(request.run_id, payload)
         return judger_pb2.ReportResponse(success=True, message="OK")
 
     async def StreamBatchRunVerdict(self, request_iterator, context):

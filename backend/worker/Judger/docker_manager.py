@@ -1,4 +1,23 @@
+import os
 import docker
+
+def _resolve_runtime(client) -> str | None:
+    """
+    Pick the container runtime. JUDGER_RUNTIME env overrides auto-detection.
+    Returns None to use Docker's default (runc) when gVisor is unavailable.
+    """
+    configured = os.getenv("JUDGER_RUNTIME", "auto").strip()
+    if configured and configured.lower() not in ("auto", "default", "runc"):
+        return configured
+
+    try:
+        runtimes = client.info().get("Runtimes", {})
+        if "runsc" in runtimes:
+            return "runsc"
+    except Exception:
+        pass
+    return None
+
 
 class DockerManager:
     def __init__(self, submission_id, time_limit, memory_limit):
@@ -19,10 +38,9 @@ class DockerManager:
                 path=dockerfile_path, tag=self.image_name, forcerm=True
             )
 
-        container = self.client.containers.run(
+        run_kwargs = dict(
             image=image.id,
             name=self.container_name,
-            runtime="runsc",        # Strict gVisor kernel interception
             detach=True,
             tty=True,               # Keep container alive while injecting archives
             mem_limit=f'{self.memory_limit}m',
@@ -34,5 +52,10 @@ class DockerManager:
             # Removed: security_opt=["apparmor=unconfined"] — not needed without Isolate
             # Removed: auto_remove=True                     — judger.py finally calls remove(force=True)
         )
+        runtime = _resolve_runtime(self.client)
+        if runtime:
+            run_kwargs["runtime"] = runtime
+
+        container = self.client.containers.run(**run_kwargs)
 
         return container

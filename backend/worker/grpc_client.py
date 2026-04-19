@@ -1,13 +1,15 @@
 """
 Synchronous gRPC client helpers for workers to report verdicts directly to
 the FastAPI backend's JudgeCoordinator service — no HTTP webhooks required.
-
-Each function opens a short-lived channel, makes one call, then closes it.
-This is intentional: workers are long-running processes and keeping a
-persistent channel risks silent disconnects. For high-throughput scenarios,
-replace with a shared channel + retry interceptor.
 """
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load backend/.env before reading GRPC_BACKEND (local dev uses 127.0.0.1, not "backend")
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
 import grpc
 import judger_pb2
 import judger_pb2_grpc

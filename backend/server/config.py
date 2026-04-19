@@ -1,7 +1,13 @@
 import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load backend/.env for local development (no-op if file is absent)
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # RabbitMQ connection parameters
-RABBITMQ_HOST = 'localhost'
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 
 # Shared secret for HMAC-SHA256 webhook authentication.
 # The worker signs the payload; the API server verifies it.
@@ -32,5 +38,7 @@ DLX_RUN_QUEUE = 'dlx_run_queue'
 DLX_SUBMIT_QUEUE = 'dlx_submit_queue'
 
 # Database Configuration
-# In production, these should be loaded from environment variables (e.g. os.getenv(...))
-DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/cfclone"
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/cfclone",
+)

@@ -7,20 +7,18 @@ Covers:
   - TestCase CRUD + dry-run judging via the existing /run endpoint
   - Contest CRUD + problem assignment
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from pydantic import BaseModel, Field
 from typing import Optional, List
-import httpx
 import uuid
 
 from server.db.database import get_db_session
 from server.db.models import User, Problem, ProblemVersion, TestCase, Contest, ContestProblem, Submission
 from server.auth import get_current_user
 from server.blob_storage import upload_text
-from server.config import RUN_EXCHANGE, RUN_ROUTING_KEY, REDIS_URL, INTERNAL_API_URL
-from server.messaging import RabbitMQClient
+from server.config import RUN_EXCHANGE, RUN_ROUTING_KEY, REDIS_URL
 from server.ws import manager as ws_manager
 
 import datetime
@@ -341,13 +339,14 @@ async def admin_run_testcase(
     problem_id: int,
     tc_id: int,
     payload: TestCaseRunRequest,
+    request: Request,
     admin: User = Depends(admin_required),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Dry-run: submit src_code against a specific test case synchronously
-    by calling the judger worker's underlying logic via the /run endpoint.
-    Uses a unique callback URL to a temp in-memory result holder.
+    Dry-run: enqueue src_code against a specific test case via RabbitMQ.
+    Stores expected output in Redis keyed by run_id; the gRPC ReportRunVerdict
+    handler compares and broadcasts the final AC/WA verdict.
     """
     pv = await _get_latest_version(problem_id, db)
     result = await db.execute(
@@ -357,28 +356,26 @@ async def admin_run_testcase(
     if not tc:
         raise HTTPException(status_code=404, detail="Test case not found")
 
-    # Use a unique run_id so we can match the callback
     run_id = str(uuid.uuid4())
-    callback_url = f"{INTERNAL_API_URL}/admin/run-result/{run_id}"
 
-    # Enqueue via the existing /run endpoint (going through MQ → worker)
-    run_payload = {
-        "language": payload.language,
-        "time_limit": pv.time_limit_ms,
-        "memory_limit": pv.memory_limit_mb,
-        "src_code": payload.src_code,
-        "std_in": tc.input_data,
-        "callback_url": callback_url,
-    }
-
-    # Store expected_output in Redis with 60s TTL (multi-process safe)
+    # Store expected_output before enqueue so the gRPC handler can compare
+    # even if the worker finishes very quickly.
     r = await _get_redis()
     await r.set(f"admin_run:{run_id}", json.dumps({
         "expected_output": tc.expected_output,
     }), ex=60)
 
-    async with httpx.AsyncClient() as client:
-        await client.post(f"{INTERNAL_API_URL}/run", json=run_payload)
+    run_payload = {
+        "run_id": run_id,
+        "language": payload.language,
+        "time_limit": pv.time_limit_ms,
+        "memory_limit": pv.memory_limit_mb,
+        "src_code": payload.src_code,
+        "std_in": tc.input_data,
+    }
+
+    mq = request.app.state.mq
+    await mq.publish_message(RUN_EXCHANGE, RUN_ROUTING_KEY, body=run_payload)
 
     return {"run_id": run_id, "msg": "Run enqueued. Connect to WS /ws/runs/{run_id} for result."}
 

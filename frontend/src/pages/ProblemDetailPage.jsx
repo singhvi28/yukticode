@@ -242,7 +242,8 @@ const ProblemDetailPage = () => {
       // Single POST with all tests bundled
       const response = await api.post('/run_batch', {
         language: language === 'python' ? 'py' : language,
-        time_limit: Math.ceil(problem.timeLimit / 1000) || 2,
+        // Judger expects milliseconds (same as problem.timeLimit from the API)
+        time_limit: problem.timeLimit || 2000,
         memory_limit: problem.memoryLimit || 256,
         src_code: code,
         tests: allTests.map(t => ({
