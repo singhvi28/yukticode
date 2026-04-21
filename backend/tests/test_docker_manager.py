@@ -48,11 +48,13 @@ class TestDockerManagerStartContainer:
             mock_docker.from_env.return_value = mock_client
             mock_docker.errors.ImageNotFound = docker.errors.ImageNotFound
 
-            # Image missing
-            mock_client.images.get.side_effect = docker.errors.ImageNotFound('not found')
-            
             mock_image = MagicMock()
             mock_image.id = 'sha256:new'
+            # First lookup misses; second lookup (after build) hits
+            mock_client.images.get.side_effect = [
+                docker.errors.ImageNotFound('not found'),
+                mock_image,
+            ]
             mock_client.images.build.return_value = (mock_image, [])
 
             dm = _make_dm(submission_id="test-build")
@@ -61,5 +63,13 @@ class TestDockerManagerStartContainer:
             mock_client.images.build.assert_called_once()
             _, kwargs = mock_client.images.build.call_args
             assert kwargs['forcerm'] is True
-            
+            assert 'judger-runtime-img:' in kwargs['tag']
+
             mock_client.containers.run.assert_called_once()
+
+    def test_image_tag_is_dockerfile_content_hash(self):
+        from worker.Judger.docker_manager import _image_tag, _dockerfile_path
+        import hashlib
+
+        expected = hashlib.sha256(_dockerfile_path().read_bytes()).hexdigest()[:12]
+        assert _image_tag() == f"judger-runtime-img:{expected}"
