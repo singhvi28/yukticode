@@ -9,6 +9,11 @@ class TLEException(Exception):
         self.peak_memory_mb = peak_memory_mb
 
 
+class SandboxError(Exception):
+    """Raised for infrastructure faults inside the sandbox (missing tools, metrics)."""
+    pass
+
+
 class BaseLanguage(ABC):
     """
     Abstract base class for language-specific compile/run helpers.
@@ -42,8 +47,12 @@ class BaseLanguage(ABC):
             (exit_code, "", execution_time_ms, peak_memory_mb, stderr_str)
         Raises:
             TLEException if wall-clock or CPU time exceeds time_limit.
+            SandboxError if sandbox tooling or metrics collection fails.
             RuntimeError  if the Docker exec_run call itself fails.
         """
+        # use_mem_limit / max_processes retained for call-site compatibility (removed in a follow-up)
+        _ = (use_mem_limit, max_processes)
+
         # 1. Clear stale outputs from the previous test case
         self.container.exec_run(
             'rm -f /workspace/actual_op.txt /workspace/error_log.txt /workspace/time.txt'
@@ -91,14 +100,22 @@ class BaseLanguage(ABC):
 
         exit_code = result.get('exit_code', 1)
 
+        # 127 = command not found (e.g. missing /usr/bin/time); 126 = not executable
+        if exit_code in (126, 127):
+            raise SandboxError(
+                f"Sandbox tool failed with exit code {exit_code} "
+                f"(missing or non-executable binary in judger image)"
+            )
+
         # 4. Parse metrics from /usr/bin/time output
-        _, time_out = self.container.exec_run("cat /workspace/time.txt")
+        cat_ec, time_out = self.container.exec_run("cat /workspace/time.txt")
         time_str = time_out.decode('utf-8', errors='replace').strip() if time_out else ""
 
         peak_memory_mb = 0.0
         execution_time_ms = 0.0
+        metrics_ok = False
 
-        if "MEM:" in time_str and "CPU:" in time_str:
+        if cat_ec == 0 and "MEM:" in time_str and "CPU:" in time_str:
             try:
                 parts = time_str.split()
                 mem_kb = float(parts[0].split(':')[1])
@@ -106,14 +123,22 @@ class BaseLanguage(ABC):
 
                 cpu_parts = parts[1].split(':')[1].split('+')
                 execution_time_ms = (float(cpu_parts[0]) + float(cpu_parts[1])) * 1000.0
+                metrics_ok = True
             except (ValueError, IndexError):
-                pass
+                metrics_ok = False
 
-        # 5. Handle resource-limit verdicts
-        # exit 137 = SIGKILL from Docker OOM killer; peak stays at limit
+        # OOM kill may leave no usable metrics file — still a valid MLE path
         if exit_code == 137 and peak_memory_mb == 0.0:
             peak_memory_mb = float(memory_limit)
+            metrics_ok = True
 
+        if not metrics_ok and exit_code not in (124, 143):
+            raise SandboxError(
+                f"Failed to collect execution metrics from /workspace/time.txt "
+                f"(cat_ec={cat_ec}, content={time_str[:200]!r})"
+            )
+
+        # 5. Handle resource-limit verdicts
         # exit 124 = timeout's own code; exit 143 = SIGTERM from --preserve-status TLE
         if exit_code in (124, 143) or execution_time_ms > time_limit:
             raise TLEException("Time Limit Exceeded", peak_memory_mb=peak_memory_mb)
