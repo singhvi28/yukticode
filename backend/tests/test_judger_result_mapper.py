@@ -23,11 +23,19 @@ class TestMapExitCode:
     def test_137_is_mle(self):
         assert map_exit_code(137) == "MLE"
 
-    def test_unknown_exit_code(self):
-        assert map_exit_code(99) == "UNKNOWN"
+    def test_unmapped_exit_code_is_re(self):
+        assert map_exit_code(99) == "RE"
 
-    def test_negative_exit_code_is_unknown(self):
-        assert map_exit_code(-1) == "UNKNOWN"
+    def test_negative_exit_code_is_re(self):
+        assert map_exit_code(-1) == "RE"
+
+    def test_command_not_found_is_system_error(self):
+        assert map_exit_code(127) == "SYSTEM_ERROR"
+        assert map_exit_code(126) == "SYSTEM_ERROR"
+
+    def test_segfault_is_re(self):
+        assert map_exit_code(139) == "RE"
+        assert map_exit_code(134) == "RE"
 
     def test_return_type_is_always_str(self):
         for code in [0, 1, 137, 143, 999]:
@@ -40,7 +48,10 @@ class TestMapExitCode:
         (143, "TLE"),
         (137, "MLE"),
         (2,   "RE"),
-        (255, "UNKNOWN"),
+        (126, "SYSTEM_ERROR"),
+        (127, "SYSTEM_ERROR"),
+        (139, "RE"),
+        (255, "RE"),
     ])
     def test_all_known_codes(self, code, expected):
         assert map_exit_code(code) == expected
