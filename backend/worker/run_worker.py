@@ -16,6 +16,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+for _noisy in ("aiormq", "aio_pika", "urllib3", "docker"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 RABBITMQ_HOST = os.getenv('RABBITMQ_HOST', 'localhost')

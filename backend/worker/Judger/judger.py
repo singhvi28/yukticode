@@ -1,9 +1,7 @@
-import io
 import time
 import uuid
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
 from .docker_manager import DockerManager
 from .file_utils import put_files_to_container, extract_file_from_container, MAX_READ_BYTES
 from .result_mapper import map_exit_code
