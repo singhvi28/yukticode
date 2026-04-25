@@ -40,6 +40,8 @@ def _resolve_runtime(client) -> str | None:
     Pick the container runtime. JUDGER_RUNTIME env overrides auto-detection.
     Returns None to use Docker's default (runc) when gVisor is unavailable.
     """
+    global _runtime_warned
+
     configured = os.getenv("JUDGER_RUNTIME", "auto").strip()
     if configured and configured.lower() not in ("auto", "default", "runc"):
         return configured
@@ -50,6 +52,14 @@ def _resolve_runtime(client) -> str | None:
             return "runsc"
     except Exception:
         pass
+
+    if not _runtime_warned:
+        _runtime_warned = True
+        logger.warning(
+            "gVisor runtime (runsc) is not available; falling back to the "
+            "default Docker runtime. Isolation is weaker than production. "
+            "Install gVisor or set JUDGER_RUNTIME=runsc once it is configured."
+        )
     return None
 
 
