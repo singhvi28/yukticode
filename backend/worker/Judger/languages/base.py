@@ -9,6 +9,13 @@ class TLEException(Exception):
         self.peak_memory_mb = peak_memory_mb
 
 
+class MLEException(Exception):
+    """Raised when a submission exceeds its memory limit without an OOM kill."""
+    def __init__(self, message, peak_memory_mb=0.0):
+        super().__init__(message)
+        self.peak_memory_mb = peak_memory_mb
+
+
 class SandboxError(Exception):
     """Raised for infrastructure faults inside the sandbox (missing tools, metrics)."""
     pass
@@ -31,8 +38,7 @@ class BaseLanguage(ABC):
         """Run the compiled/interpreted code. Returns (exit_code, stdout, time_ms, mem_mb, stderr)."""
         pass
 
-    def run_with_gvisor(self, process_cmd: str, time_limit: int, memory_limit: int,
-                        use_mem_limit: bool = True, max_processes: int = 1):
+    def run_with_gvisor(self, process_cmd: str, time_limit: int, memory_limit: int):
         """
         Executes `process_cmd` inside the gVisor container using POSIX tools:
           - `timeout`: enforces a hard wall-clock deadline and exits with code 124.
@@ -47,12 +53,10 @@ class BaseLanguage(ABC):
             (exit_code, "", execution_time_ms, peak_memory_mb, stderr_str)
         Raises:
             TLEException if wall-clock or CPU time exceeds time_limit.
+            MLEException if peak RSS exceeds memory_limit without OOM kill.
             SandboxError if sandbox tooling or metrics collection fails.
             RuntimeError  if the Docker exec_run call itself fails.
         """
-        # use_mem_limit / max_processes retained for call-site compatibility (removed in a follow-up)
-        _ = (use_mem_limit, max_processes)
-
         # 1. Clear stale outputs from the previous test case
         self.container.exec_run(
             'rm -f /workspace/actual_op.txt /workspace/error_log.txt /workspace/time.txt'
@@ -142,6 +146,12 @@ class BaseLanguage(ABC):
         # exit 124 = timeout's own code; exit 143 = SIGTERM from --preserve-status TLE
         if exit_code in (124, 143) or execution_time_ms > time_limit:
             raise TLEException("Time Limit Exceeded", peak_memory_mb=peak_memory_mb)
+
+        if peak_memory_mb > float(memory_limit):
+            raise MLEException(
+                f"Memory Limit Exceeded ({peak_memory_mb:.1f}MB > {memory_limit}MB)",
+                peak_memory_mb=peak_memory_mb,
+            )
 
         # 6. Capture stderr for RE diagnostics
         _, stderr_out = self.container.exec_run("cat /workspace/error_log.txt")

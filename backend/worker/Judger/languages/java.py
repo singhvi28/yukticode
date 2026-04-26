@@ -24,19 +24,15 @@ class JavaLanguage(BaseLanguage):
 
     def run(self, submission_id):
         """
-        Run the compiled Java class.
-
-        use_mem_limit=False: the JVM maps huge virtual address space for JIT/GC
-        which would trigger the Docker mem limit incorrectly. Docker's mem_limit
-        handles the actual physical cap at the container level.
+        Run the compiled Java class with an explicit heap cap (-Xmx).
+        Docker's mem_limit still enforces the container-level physical cap.
 
         Returns:
             (exit_code, "", execution_time_ms, peak_memory_mb, stderr)
         Raises:
             TLEException: if execution exceeds self.time_limit milliseconds.
         """
-        process_cmd = "/usr/bin/java -cp /workspace Main"
-        return self.run_with_gvisor(
-            process_cmd, self.time_limit, self.memory_limit,
-            use_mem_limit=False, max_processes=0
-        )
+        # Leave a little headroom under the container mem_limit for JVM metaspace/native
+        heap_mb = max(16, int(self.memory_limit) - 32)
+        process_cmd = f"/usr/bin/java -Xmx{heap_mb}m -cp /workspace Main"
+        return self.run_with_gvisor(process_cmd, self.time_limit, self.memory_limit)

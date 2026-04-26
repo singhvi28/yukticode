@@ -5,7 +5,7 @@ import logging
 from .docker_manager import DockerManager
 from .file_utils import put_files_to_container, extract_file_from_container, MAX_READ_BYTES
 from .result_mapper import map_exit_code
-from .languages.base import TLEException, SandboxError
+from .languages.base import TLEException, MLEException, SandboxError
 from .languages.cpp import CppLanguage
 from .languages.python import PythonLanguage
 from .languages.java import JavaLanguage
@@ -120,6 +120,10 @@ def run_judger(language, time_limit, memory_limit,
                 total_time_ms += float(time_limit)  # charge full TL
                 peak_memory_mb = max(peak_memory_mb, getattr(e, "peak_memory_mb", 0.0))
                 return _result("TLE")
+            except MLEException as e:
+                logger.warning("[%s] Memory limit exceeded on test case %d", submission_id, i+1)
+                peak_memory_mb = max(peak_memory_mb, getattr(e, "peak_memory_mb", 0.0))
+                return _result("MLE", str(e))
             except SandboxError as e:
                 logger.error("[%s] Sandbox fault on test case %d: %s", submission_id, i+1, e)
                 return _result("SYSTEM_ERROR", str(e))
@@ -192,6 +196,9 @@ def custom_run(language, time_limit, memory_limit,
             logger.warning("[%s] Time limit exceeded — stopping container", submission_id)
             # time_limit is already in milliseconds (same units as execution_time_ms)
             return {"verdict": "TLE", "output": "", "message": "", "execution_time_ms": float(time_limit), "peak_memory_mb": getattr(e, "peak_memory_mb", 0.0)}
+        except MLEException as e:
+            logger.warning("[%s] Memory limit exceeded — stopping container", submission_id)
+            return {"verdict": "MLE", "output": "", "message": str(e)[:2000], "execution_time_ms": float(time_limit), "peak_memory_mb": getattr(e, "peak_memory_mb", 0.0)}
         except SandboxError as e:
             logger.error("[%s] Sandbox fault during custom run: %s", submission_id, e)
             return {"verdict": "SYSTEM_ERROR", "output": "", "message": str(e)[:2000], "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
