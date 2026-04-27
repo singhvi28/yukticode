@@ -36,22 +36,18 @@ async def run_callback(message: aio_pika.abc.AbstractIncomingMessage):
             logger.info("Batch run: language=%s, tests=%d, batch_id=%s", language, len(tests), batch_id)
 
             def _judge_batch():
-                """Synchronous generator — runs in executor thread."""
-                for i, tc in enumerate(tests):
-                    try:
-                        res = judger.custom_run(
-                            language=language,
-                            time_limit=data["time_limit"],
-                            memory_limit=data["memory_limit"],
-                            src_code=data["src_code"],
-                            std_in=tc.get("input", " "),
-                        )
-                    except Exception:
-                        logger.exception("Batch test %d failed", i)
-                        res = {"verdict": "SYSTEM_ERROR", "output": "", "execution_time_ms": 0.0, "peak_memory_mb": 0.0}
-
+                """Synchronous generator — one container, compile once."""
+                for i, res in enumerate(
+                    judger.custom_run_batch(
+                        language=language,
+                        time_limit=data["time_limit"],
+                        memory_limit=data["memory_limit"],
+                        src_code=data["src_code"],
+                        tests=tests,
+                    )
+                ):
                     verdict = res.get("verdict", "SYSTEM_ERROR")
-                    expected_output = tc.get("expected_output")
+                    expected_output = tests[i].get("expected_output") if i < len(tests) else None
                     if verdict == "AC" and expected_output is not None:
                         if not judger.compare_outputs(expected_output, res.get("output", "")):
                             verdict = "WA"

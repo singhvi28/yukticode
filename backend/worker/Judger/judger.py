@@ -229,3 +229,102 @@ def custom_run(language, time_limit, memory_limit,
                 container.remove(force=True)
             except Exception:
                 pass
+
+def custom_run_batch(language, time_limit, memory_limit, src_code=None, tests=None):
+    """
+    Run many custom tests in a single ephemeral container.
+
+    Compiles once (cpp/java). Yields one result dict per test with keys:
+      verdict, output, message, execution_time_ms, peak_memory_mb
+
+    Never raises — each yielded dict is a complete result.
+    """
+    tests = tests or []
+    submission_id = str(uuid.uuid4())
+    container = None
+    results_yielded = 0
+
+    def _one(verdict, output="", message="", time_ms=0.0, mem_mb=0.0):
+        return {
+            "verdict": verdict,
+            "output": output,
+            "message": (message or "")[:2000],
+            "execution_time_ms": time_ms,
+            "peak_memory_mb": mem_mb,
+        }
+
+    try:
+        dm = DockerManager(submission_id, time_limit, memory_limit)
+        container = dm.start_container()
+        language_instance = get_language_instance(language, container, time_limit, memory_limit)
+
+        put_files_to_container(container, language, src_code, None)
+
+        if language in ["cpp", "java"]:
+            compile_exit_code, compile_output = language_instance.compile(submission_id=submission_id)
+            if compile_exit_code != 0:
+                for _ in tests:
+                    results_yielded += 1
+                    yield _one("CE", message=compile_output)
+                return
+
+        for i, tc in enumerate(tests):
+            std_in = tc.get("input", " ")
+            put_files_to_container(container, language, None, std_in)
+
+            try:
+                t_start = time.perf_counter()
+                run_exit_code, _, exec_time, exec_mem, run_stderr = language_instance.run(
+                    submission_id=submission_id
+                )
+                elapsed_ms = exec_time if exec_time > 0 else (time.perf_counter() - t_start) * 1000.0
+            except TLEException as e:
+                results_yielded += 1
+                yield _one("TLE", time_ms=float(time_limit), mem_mb=getattr(e, "peak_memory_mb", 0.0))
+                continue
+            except MLEException as e:
+                results_yielded += 1
+                yield _one(
+                    "MLE",
+                    message=str(e),
+                    time_ms=float(time_limit),
+                    mem_mb=getattr(e, "peak_memory_mb", 0.0),
+                )
+                continue
+            except SandboxError as e:
+                logger.error("[%s] Sandbox fault on batch test %d: %s", submission_id, i, e)
+                results_yielded += 1
+                yield _one("SYSTEM_ERROR", message=str(e))
+                continue
+
+            if run_exit_code != 0:
+                results_yielded += 1
+                yield _one(
+                    map_exit_code(run_exit_code),
+                    message=run_stderr,
+                    time_ms=elapsed_ms,
+                    mem_mb=exec_mem,
+                )
+                continue
+
+            run_output = extract_file_from_container(container, "/workspace/actual_op.txt")
+            results_yielded += 1
+            yield _one("AC", output=run_output, time_ms=elapsed_ms, mem_mb=exec_mem)
+
+    except Exception:
+        logger.exception(
+            "[%s] Unhandled error during batch run (language=%s)",
+            submission_id, language,
+        )
+        for _ in range(results_yielded, len(tests)):
+            yield _one("SYSTEM_ERROR")
+    finally:
+        if container:
+            try:
+                container.stop(timeout=1)
+            except Exception:
+                pass
+            try:
+                container.remove(force=True)
+            except Exception:
+                pass
