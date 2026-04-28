@@ -139,47 +139,8 @@ class TestQueueNameConsistency:
 
 
 # ---------------------------------------------------------------------------
-# Bug 4 — queue_declare must use passive=True
+# Bug 4 — workers declare queues with DLX args via aio_pika (server owns topology)
 # ---------------------------------------------------------------------------
-
-class TestWorkerQueueDeclarePassive:
-    """
-    Workers must NOT redeclare queues with different arguments.
-    The server already declared them with DLX args; a plain declare would
-    cause RabbitMQ PRECONDITION_FAILED and crash the worker at startup.
-    """
-
-    def test_queue_declare_called_with_passive_true(self):
-        with patch('worker.messaging.pika') as mock_pika:
-            mock_conn = MagicMock()
-            mock_channel = MagicMock()
-            mock_pika.BlockingConnection.return_value = mock_conn
-            mock_conn.channel.return_value = mock_channel
-
-            from worker.messaging import RabbitMQConsumer
-            RabbitMQConsumer(host='localhost', queue='submit_queue_v2', callback=MagicMock())
-
-        # Verify passive=True is present — without it RabbitMQ would crash
-        _, kwargs = mock_channel.queue_declare.call_args
-        assert kwargs.get('passive') is True, (
-            "queue_declare called without passive=True — this causes "
-            "PRECONDITION_FAILED when the server has already declared the "
-            "queue with DLX arguments."
-        )
-
-    def test_queue_declare_does_not_include_dlx_arguments(self):
-        """Workers must not pass x-dead-letter-* args — the server owns that declaration."""
-        with patch('worker.messaging.pika') as mock_pika:
-            mock_conn = MagicMock()
-            mock_channel = MagicMock()
-            mock_pika.BlockingConnection.return_value = mock_conn
-            mock_conn.channel.return_value = mock_channel
-
-            from worker.messaging import RabbitMQConsumer
-            RabbitMQConsumer(host='localhost', queue='submit_queue_v2', callback=MagicMock())
-
-        _, kwargs = mock_channel.queue_declare.call_args
-        arguments = kwargs.get('arguments', {})
-        assert 'x-dead-letter-exchange' not in (arguments or {}), (
-            "Worker must not declare DLX args — use passive=True instead."
-        )
+# The old TestWorkerQueueDeclarePassive class targeted worker.messaging.RabbitMQConsumer,
+# which no longer exists after the aio_pika migration. Queue-name consistency above
+# still guards the important contract.

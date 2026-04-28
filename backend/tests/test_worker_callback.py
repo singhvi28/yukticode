@@ -1,129 +1,95 @@
 """
-Tests for the send_callback helper and ack/nack routing in workers.
-All external dependencies are mocked — no real pika or HTTP connections.
+Tests for worker/grpc_client.py — verdict reporting helpers.
+gRPC channel/stub are fully mocked; no network required.
 """
 import sys
 import os
-import types
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'worker'))
+
 from unittest.mock import patch, MagicMock
 
-import pytest
-import time
-import msgpack
-import httpx
+
+class TestReportSubmitVerdict:
+    def test_builds_request_and_calls_stub(self):
+        mock_stub = MagicMock()
+        mock_channel = MagicMock()
+        mock_channel.__enter__ = MagicMock(return_value=mock_channel)
+        mock_channel.__exit__ = MagicMock(return_value=False)
+
+        with patch('grpc_client.grpc.insecure_channel', return_value=mock_channel), \
+             patch('grpc_client.judger_pb2_grpc.JudgeCoordinatorStub', return_value=mock_stub), \
+             patch('grpc_client.judger_pb2') as mock_pb2:
+            mock_pb2.SubmitVerdictRequest.return_value = MagicMock(name='req')
+
+            from grpc_client import report_submit_verdict
+            report_submit_verdict(submission_id=42, status="AC", time_ms=12.5, mem_mb=8.0)
+
+        mock_pb2.SubmitVerdictRequest.assert_called_once_with(
+            submission_id="42",
+            status="AC",
+            execution_time_ms=12.5,
+            peak_memory_mb=8.0,
+        )
+        mock_stub.ReportSubmitVerdict.assert_called_once()
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+class TestReportRunVerdict:
+    def test_builds_request_and_calls_stub(self):
+        mock_stub = MagicMock()
+        mock_channel = MagicMock()
+        mock_channel.__enter__ = MagicMock(return_value=mock_channel)
+        mock_channel.__exit__ = MagicMock(return_value=False)
 
-@pytest.fixture()
-def sw():
-    """
-    Return a freshly-imported submit_worker module with pika and messaging
-    fully mocked so no real broker connection is ever made.
-    """
-    mock_pika = MagicMock()
-    mock_messaging_mod = types.ModuleType('messaging')
-    mock_messaging_mod.RabbitMQConsumer = MagicMock()
+        with patch('grpc_client.grpc.insecure_channel', return_value=mock_channel), \
+             patch('grpc_client.judger_pb2_grpc.JudgeCoordinatorStub', return_value=mock_stub), \
+             patch('grpc_client.judger_pb2') as mock_pb2:
+            mock_pb2.RunVerdictRequest.return_value = MagicMock(name='req')
 
-    # Remove any cached version so we always get a clean import
-    for key in list(sys.modules.keys()):
-        if key in ('submit_worker', 'run_worker'):
-            del sys.modules[key]
-
-    with patch.dict('sys.modules', {'pika': mock_pika, 'messaging': mock_messaging_mod}):
-        import submit_worker
-        yield submit_worker
-
-    # Clean up after the test so the cached module doesn't bleed out
-    for key in ('submit_worker', 'run_worker'):
-        sys.modules.pop(key, None)
-
-
-# ---------------------------------------------------------------------------
-# send_callback tests  (synchronous — uses httpx.Client, not AsyncClient)
-# ---------------------------------------------------------------------------
-
-class TestSendCallback:
-    def test_delivers_on_first_attempt(self, sw):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-
-        with patch('httpx.Client') as MockClient:
-            instance = MagicMock()
-            instance.post = MagicMock(return_value=mock_response)
-            MockClient.return_value.__enter__ = MagicMock(return_value=instance)
-            MockClient.return_value.__exit__ = MagicMock(return_value=False)
-
-            sw.send_callback("http://example.com/cb", {"status": "AC"}, max_retries=3)
-            instance.post.assert_called_once()
-
-    def test_retries_on_timeout_and_succeeds(self, sw):
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-
-        with patch('httpx.Client') as MockClient, \
-             patch('time.sleep'):
-            instance = MagicMock()
-            instance.post = MagicMock(
-                side_effect=[httpx.TimeoutException("timed out"), mock_response]
+            from grpc_client import report_run_verdict
+            report_run_verdict(
+                run_id="abc", status="AC", std_out="1\n",
+                time_ms=3.0, mem_mb=1.5, test_index=0,
             )
-            MockClient.return_value.__enter__ = MagicMock(return_value=instance)
-            MockClient.return_value.__exit__ = MagicMock(return_value=False)
 
-            sw.send_callback("http://example.com/cb", {"status": "AC"}, max_retries=3)
-
-        assert instance.post.call_count == 2
-
-    def test_raises_after_max_retries_exhausted(self, sw):
-        with patch('httpx.Client') as MockClient, \
-             patch('time.sleep'):
-            instance = MagicMock()
-            instance.post = MagicMock(side_effect=httpx.TimeoutException("always out"))
-            MockClient.return_value.__enter__ = MagicMock(return_value=instance)
-            MockClient.return_value.__exit__ = MagicMock(return_value=False)
-
-            with pytest.raises(httpx.TimeoutException):
-                sw.send_callback("http://example.com/cb", {"status": "AC"}, max_retries=3)
-
-        assert instance.post.call_count == 3
+        mock_pb2.RunVerdictRequest.assert_called_once_with(
+            run_id="abc",
+            status="AC",
+            std_out="1\n",
+            execution_time_ms=3.0,
+            peak_memory_mb=1.5,
+            test_index=0,
+        )
+        mock_stub.ReportRunVerdict.assert_called_once()
 
 
-# ---------------------------------------------------------------------------
-# Ack / Nack routing tests
-# ---------------------------------------------------------------------------
+class TestStreamBatchVerdicts:
+    def test_streams_all_results(self):
+        mock_stub = MagicMock()
+        mock_channel = MagicMock()
+        mock_channel.__enter__ = MagicMock(return_value=mock_channel)
+        mock_channel.__exit__ = MagicMock(return_value=False)
 
-class TestSubmitCallbackAckNack:
-    def _body(self):
-        return msgpack.packb({
-            "language": "py", "time_limit": 2, "memory_limit": 256,
-            "src_code": "print(1)", "test_cases": [],
-            "callback_url": "http://example.com/cb",
-        })
+        captured = []
 
-    def test_acks_on_callback_success(self, sw):
-        ch, method, props = MagicMock(), MagicMock(), MagicMock()
-        method.delivery_tag = 7
+        def _capture(gen):
+            captured.extend(list(gen))
+            return MagicMock()
 
-        with patch.object(sw, 'judger') as mock_judger, \
-             patch.object(sw, 'send_callback') as mock_send:
-            mock_judger.run_judger.return_value = {"verdict": "AC", "execution_time_ms": 50.0, "peak_memory_mb": 12.0}
-            mock_send.return_value = None
-            sw.submit_callback(ch, method, props, self._body())
+        mock_stub.StreamBatchRunVerdict.side_effect = _capture
 
-        ch.basic_ack.assert_called_once_with(delivery_tag=7)
-        ch.basic_nack.assert_not_called()
+        with patch('grpc_client.grpc.insecure_channel', return_value=mock_channel), \
+             patch('grpc_client.judger_pb2_grpc.JudgeCoordinatorStub', return_value=mock_stub), \
+             patch('grpc_client.judger_pb2') as mock_pb2:
+            mock_pb2.RunVerdictRequest.side_effect = lambda **kw: kw
 
-    def test_nacks_on_callback_failure(self, sw):
-        ch, method, props = MagicMock(), MagicMock(), MagicMock()
-        method.delivery_tag = 42
+            from grpc_client import stream_batch_verdicts
+            stream_batch_verdicts("batch-1", iter([
+                {"test_index": 0, "status": "AC", "std_out": "1", "time_ms": 1.0, "mem_mb": 2.0},
+                {"test_index": 1, "status": "WA", "std_out": "0", "time_ms": 2.0, "mem_mb": 3.0},
+            ]))
 
-        with patch.object(sw, 'judger') as mock_judger, \
-             patch.object(sw, 'send_callback') as mock_send:
-            mock_judger.run_judger.return_value = {"verdict": "AC", "execution_time_ms": 50.0, "peak_memory_mb": 12.0}
-            mock_send.side_effect = httpx.TimeoutException("gone")
-            sw.submit_callback(ch, method, props, self._body())
-
-        ch.basic_nack.assert_called_once_with(delivery_tag=42, requeue=False)
-        ch.basic_ack.assert_not_called()
+        assert len(captured) == 2
+        assert captured[0]["run_id"] == "batch-1"
+        assert captured[1]["status"] == "WA"
+        mock_stub.StreamBatchRunVerdict.assert_called_once()

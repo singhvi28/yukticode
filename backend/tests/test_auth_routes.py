@@ -1,6 +1,6 @@
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
@@ -23,10 +23,12 @@ app.dependency_overrides[get_db_session] = override_get_db_session
 
 @pytest_asyncio.fixture(loop_scope="function", autouse=True)
 async def mock_rabbitmq(monkeypatch):
-    """Mock out RabbitMQ for auth routes to prevent network side-effects/hangs."""
-    monkeypatch.setattr("server.routes.mq.connect", AsyncMock())
-    monkeypatch.setattr("server.routes.mq.close", AsyncMock())
-    monkeypatch.setattr("server.routes.mq.publish_message", AsyncMock())
+    """Mock MQ / gRPC / WS startup so auth tests do not need a broker."""
+    mock_mq = AsyncMock()
+    monkeypatch.setattr("server.main.RabbitMQClient", MagicMock(return_value=mock_mq))
+    monkeypatch.setattr("server.main.start_grpc_server", AsyncMock(return_value=AsyncMock(stop=AsyncMock())))
+    monkeypatch.setattr("server.ws.manager.startup", AsyncMock())
+    monkeypatch.setattr("server.ws.manager.shutdown", AsyncMock())
 
 
 @pytest_asyncio.fixture(loop_scope="function", autouse=True)

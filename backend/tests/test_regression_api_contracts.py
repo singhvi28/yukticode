@@ -53,15 +53,14 @@ async def test_app(db_engine):
             yield session
 
     app = FastAPI()
+
+    @app.on_event("startup")
+    async def _attach_mq():
+        app.state.mq = AsyncMock()
+
     app.include_router(api_router)
     app.include_router(auth_router)
     app.dependency_overrides[get_db_session] = override_get_db_session
-
-    # Patch MQ so no broker connection is attempted
-    from server.routes import mq
-    mq.publish_message = AsyncMock()
-    mq.connect = AsyncMock()
-    mq.close = AsyncMock()
 
     yield app
 
