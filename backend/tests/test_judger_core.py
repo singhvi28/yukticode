@@ -239,3 +239,89 @@ class TestCompareOutputs:
         from worker.Judger.judger import MAX_READ_BYTES
         huge = "x" * (MAX_READ_BYTES + 1)
         assert compare_outputs(huge, "x") is False
+
+
+class TestSandboxErrorHandling:
+    def test_run_judger_returns_system_error_on_sandbox_fault(self):
+        from worker.Judger.languages.base import SandboxError
+        from worker.Judger.judger import run_judger
+
+        mock_lang = MagicMock()
+        mock_lang.compile.return_value = (0, "")
+        mock_lang.run.side_effect = SandboxError("missing /usr/bin/time")
+
+        with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
+             patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
+             patch('worker.Judger.judger.put_files_to_container'):
+
+            mock_dm_cls.return_value.start_container.return_value = MagicMock()
+            result = run_judger('cpp', 2000, 256, src_code='x', test_cases=[{"input": "", "expected_output": "42"}])
+
+        assert result["verdict"] == "SYSTEM_ERROR"
+        assert "missing /usr/bin/time" in result["message"]
+
+    def test_custom_run_returns_mle_on_mle_exception(self):
+        from worker.Judger.languages.base import MLEException
+        from worker.Judger.judger import custom_run
+
+        mock_lang = MagicMock()
+        mock_lang.compile.return_value = (0, "")
+        mock_lang.run.side_effect = MLEException("over", peak_memory_mb=300.0)
+
+        with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
+             patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
+             patch('worker.Judger.judger.put_files_to_container'):
+
+            mock_dm_cls.return_value.start_container.return_value = MagicMock()
+            result = custom_run('py', 2000, 256, src_code='x', std_in='')
+
+        assert result["verdict"] == "MLE"
+        assert result["peak_memory_mb"] == 300.0
+
+
+class TestCustomRunBatch:
+    def test_compiles_once_and_runs_each_test(self):
+        from worker.Judger.judger import custom_run_batch
+
+        mock_lang = MagicMock()
+        mock_lang.compile.return_value = (0, "")
+        mock_lang.run.return_value = (0, "", 50.0, 10.0, "")
+
+        with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
+             patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
+             patch('worker.Judger.judger.put_files_to_container'), \
+             patch('worker.Judger.judger.extract_file_from_container', side_effect=["1\n", "2\n"]):
+
+            mock_dm_cls.return_value.start_container.return_value = MagicMock()
+            results = list(custom_run_batch(
+                'cpp', 2000, 256,
+                src_code='int main(){}',
+                tests=[{"input": "1"}, {"input": "2"}],
+            ))
+
+        assert mock_lang.compile.call_count == 1
+        assert mock_lang.run.call_count == 2
+        assert mock_dm_cls.return_value.start_container.call_count == 1
+        assert [r["verdict"] for r in results] == ["AC", "AC"]
+        assert results[0]["output"] == "1\n"
+
+    def test_ce_short_circuits_all_tests(self):
+        from worker.Judger.judger import custom_run_batch
+
+        mock_lang = MagicMock()
+        mock_lang.compile.return_value = (1, "error: boom")
+
+        with patch('worker.Judger.judger.DockerManager') as mock_dm_cls, \
+             patch('worker.Judger.judger.get_language_instance', return_value=mock_lang), \
+             patch('worker.Judger.judger.put_files_to_container'):
+
+            mock_dm_cls.return_value.start_container.return_value = MagicMock()
+            results = list(custom_run_batch(
+                'cpp', 2000, 256,
+                src_code='bad',
+                tests=[{"input": "1"}, {"input": "2"}, {"input": "3"}],
+            ))
+
+        assert mock_lang.run.call_count == 0
+        assert len(results) == 3
+        assert all(r["verdict"] == "CE" for r in results)
