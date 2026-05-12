@@ -372,16 +372,29 @@ async def get_problem(problem_id: int, db: AsyncSession = Depends(get_db_session
     if not statement_markdown:
         statement_markdown = "Failed to load statement from Blob Storage."
 
+    # Sample cases from DB (is_sample=True)
+    sample_stmt = (
+        select(TestCase)
+        .where(
+            TestCase.problem_version_id == latest_version.id,
+            TestCase.is_sample == True,
+        )
+        .order_by(TestCase.id)
+    )
+    sample_result = await db.execute(sample_stmt)
+    sample_rows = sample_result.scalars().all()
+    samples = [
+        {"id": tc.id, "input": tc.input_data, "output": tc.expected_output}
+        for tc in sample_rows
+    ]
+
     return {
         "id": problem.id,
         "title": problem.title,
         "timeLimit": latest_version.time_limit_ms,
         "memoryLimit": latest_version.memory_limit_mb,
         "statement": statement_markdown,
-        "samples": [
-            {"id": 1, "input": "4\n2 7 11 15\n9", "output": "0 1"},
-            {"id": 2, "input": "3\n3 2 4\n6", "output": "1 2"}
-        ]
+        "samples": samples,
     }
 
 # ---------------------------------------------------------------------------
