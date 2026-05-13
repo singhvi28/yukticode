@@ -66,7 +66,7 @@ class ProblemVersion(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
 
     # Specification
-    statement_url = Column(String, nullable=False)
+    statement = Column(Text, nullable=False)
     time_limit_ms = Column(Integer, default=2000)
     memory_limit_mb = Column(Integer, default=256)
 
@@ -111,7 +111,7 @@ class Submission(Base):
     problem_version_id = Column(Integer, ForeignKey("problem_versions.id"), nullable=False)
 
     language = Column(String(20), nullable=False)
-    code_url = Column(String, nullable=False)
+    code = Column(Text, nullable=False)
 
     # Verdict/Statistics
     status = Column(String(20), default="PENDING")  # e.g., PENDING, AC, WA, CE, TLE, MLE, RE

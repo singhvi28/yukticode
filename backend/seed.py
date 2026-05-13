@@ -7,7 +7,6 @@ from sqlalchemy.orm import sessionmaker
 from server.db.database import Base
 from server.db.models import User, Problem, ProblemVersion, TestCase
 from server.config import DATABASE_URL
-from server.blob_storage import ensure_bucket_exists, upload_text
 from server.auth import get_password_hash
 
 engine = create_async_engine(DATABASE_URL, echo=False)
@@ -15,7 +14,7 @@ async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession
 
 
 # ---------------------------------------------------------------------------
-# Problem statements (markdown uploaded to MinIO)
+# Problem statements (markdown stored in Postgres)
 # ---------------------------------------------------------------------------
 
 TWO_SUM_MD = """# Two Sum
@@ -267,9 +266,6 @@ PROBLEMS = [
 
 
 async def seed():
-    ensure_bucket_exists("problems")
-    ensure_bucket_exists("submissions")
-
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
@@ -286,9 +282,6 @@ async def seed():
         await db.refresh(admin_user)
 
         for spec in PROBLEMS:
-            object_name = f"{spec['slug']}.md"
-            statement_url = upload_text("problems", object_name, spec["statement"])
-
             problem = Problem(
                 title=spec["title"],
                 author_id=admin_user.id,
@@ -303,7 +296,7 @@ async def seed():
             version = ProblemVersion(
                 problem_id=problem.id,
                 version_number=1,
-                statement_url=statement_url,
+                statement=spec["statement"],
                 time_limit_ms=spec["time_limit_ms"],
                 memory_limit_mb=spec["memory_limit_mb"],
                 test_data_path=f"/test_data/{spec['slug']}",
@@ -327,10 +320,10 @@ async def seed():
 
             print(
                 f"  + {spec['title']} "
-                f"({len(spec['test_cases'])} tests, statement → problems/{object_name})"
+                f"({len(spec['test_cases'])} tests)"
             )
 
-        print(f"\nSeeded admin user + {len(PROBLEMS)} problems into DB and MinIO.")
+        print(f"\nSeeded admin user + {len(PROBLEMS)} problems into DB.")
 
 
 if __name__ == "__main__":

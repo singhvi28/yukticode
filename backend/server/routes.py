@@ -23,7 +23,6 @@ from server.leaderboard import update_leaderboard_on_verdict
 from server.db.database import get_db_session
 from server.db.models import Problem, ProblemVersion, Submission, User, TestCase, Contest, ContestProblem
 from server.auth import get_current_user
-from server.blob_storage import upload_text, download_text
 from urllib.parse import quote
 
 router = APIRouter()
@@ -81,16 +80,12 @@ async def submit(
                     detail="This problem is locked until the contest starts.",
                 )
 
-    # 3. Upload code to Blob Storage
-    object_name = f"{uuid.uuid4()}.{submit_request.language}"
-    code_url = upload_text("submissions", object_name, submit_request.src_code)
-
-    # 4. Create Submission record
+    # 3. Create Submission record (source stored in Postgres)
     new_submission = Submission(
         user_id=current_user.id,
         problem_version_id=latest_version.id,
         language=submit_request.language,
-        code_url=code_url,
+        code=submit_request.src_code,
         status="PENDING",
         contest_id=submit_request.contest_id if submit_request.contest_id else None,
     )
@@ -367,10 +362,7 @@ async def get_problem(problem_id: int, db: AsyncSession = Depends(get_db_session
             "samples": []
         }
 
-    # Download statement markdown from Blob Storage
-    statement_markdown = download_text("problems", latest_version.statement_url)
-    if not statement_markdown:
-        statement_markdown = "Failed to load statement from Blob Storage."
+    statement_markdown = latest_version.statement or "No statement available."
 
     # Sample cases from DB (is_sample=True)
     sample_stmt = (

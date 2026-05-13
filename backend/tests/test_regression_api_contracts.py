@@ -169,7 +169,7 @@ class TestSubmissionPollingRequiresAuth:
                 await session.flush()
                 pv = ProblemVersion(
                     problem_id=problem.id, version_number=1,
-                    statement_url="s3://bucket/stmt.md",
+                    statement="# Dave's Problem\n",
                     time_limit_ms=2000, memory_limit_mb=256,
                     test_data_path="/test_data/p1",
                 )
@@ -177,7 +177,7 @@ class TestSubmissionPollingRequiresAuth:
                 await session.flush()
                 sub = Submission(
                     user_id=user_id, problem_version_id=pv.id,
-                    language="py", code_url="s3://bucket/code.py", status="PENDING",
+                    language="py", code="print(1)", status="PENDING",
                 )
                 session.add(sub)
                 await session.commit()
@@ -217,7 +217,7 @@ class TestSubmissionPollingRequiresAuth:
                 await session.flush()
                 pv = ProblemVersion(
                     problem_id=problem.id, version_number=1,
-                    statement_url="s3://bucket/stmt.md",
+                    statement="# Frank's Problem\n",
                     time_limit_ms=2000, memory_limit_mb=256,
                     test_data_path="/test_data/p2",
                 )
@@ -225,7 +225,7 @@ class TestSubmissionPollingRequiresAuth:
                 await session.flush()
                 sub = Submission(
                     user_id=frank_id, problem_version_id=pv.id,
-                    language="py", code_url="s3://bucket/code.py", status="AC",
+                    language="py", code="print(1)", status="AC",
                 )
                 session.add(sub)
                 await session.commit()

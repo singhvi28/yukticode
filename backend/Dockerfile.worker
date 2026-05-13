@@ -12,7 +12,7 @@ WORKDIR /app
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir python-jose[cryptography] python-multipart minio
+    && pip install --no-cache-dir python-jose[cryptography] python-multipart
 
 # Copy the entire backend so workers can import server.config / server.db.*
 COPY . .

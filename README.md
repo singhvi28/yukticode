@@ -33,14 +33,12 @@ Nginx (port 80)
                                Docker Socket         Docker Socket
                                     │                     │
                             judger container      judger container
-                                    │
-                            MinIO (blob storage)
 ```
 
 ### Request lifecycle (Code Submission)
 1. Browser POSTs to `/api/submit` → JWT authenticated
-2. FastAPI writes a `PENDING` submission to PostgreSQL, enqueues a job on RabbitMQ
-3. **`submit_worker`** dequeues the job, runs it inside an ephemeral Docker container (with strict Isolate sandboxing), collects exact real execution time and peak memory (`max-rss`) from `meta.txt`
+2. FastAPI writes a `PENDING` submission (with source code) to PostgreSQL, enqueues a job on RabbitMQ
+3. **`submit_worker`** dequeues the job, loads code + test cases from PostgreSQL, runs it inside an ephemeral Docker container (with strict Isolate sandboxing), collects exact real execution time and peak memory (`max-rss`) from `meta.txt`
 4. Worker POSTs the verdict + stats to `/api/webhook/submit/{id}`
 5. Webhook stores the result in PostgreSQL and broadcasts the JSON onto a centralized **Redis Pub/Sub** network.
 6. The exact FastAPI instance holding the user's **WebSocket** receives the Redis broadcast and pushes it in real-time (no polling)
@@ -56,7 +54,7 @@ Nginx (port 80)
 | **Languages** | Python 3, C++ |
 | **Admin Panel** | Problem CRUD, test case management, dry-run per test case, contest CRUD |
 | **Auth** | JWT-based register/login; `is_admin` flag for admin routes |
-| **Storage** | Problem statements + submission code stored in MinIO (S3-compatible) |
+| **Storage** | Problem statements + submission code stored in PostgreSQL |
 | **Security** | Static analysis (forbidden patterns), sandboxed containers, network disabled |
 
 ---
@@ -73,13 +71,12 @@ cp .env.example .env
 # 2. Build and start all services
 docker compose up --build
 
-# 3. Seed the database and blob storage with problems
+# 3. Seed the database with problems
 docker compose exec backend python3 seed.py
 
 # frontend  →  http://localhost
 # API docs  →  http://localhost/api/docs
 # RabbitMQ  →  http://localhost:15672   (guest / guest)
-# MinIO     →  http://localhost:9001    (minioadmin / minioadmin)
 # Redis     →  Listening on port 6379
 ```
 
@@ -105,7 +102,6 @@ Then visit **http://localhost/admin/problems**.
 - PostgreSQL 15+
 - RabbitMQ 3.13+
 - Redis 7+
-- MinIO (or any S3-compatible bucket)
 - Docker daemon (the judger spawns containers)
 
 ### 1. Backend
@@ -113,19 +109,18 @@ Then visit **http://localhost/admin/problems**.
 ```bash
 cd backend
 pip install -r requirements.txt
-pip install python-jose[cryptography] python-multipart minio
+pip install python-jose[cryptography] python-multipart
 
 # Set environment variables (or create a .env for your shell)
 export DATABASE_URL="postgresql+asyncpg://judge:judge@localhost:5432/judge"
 export RABBITMQ_HOST=localhost
 export REDIS_URL="redis://localhost:6379/0"
-export MINIO_ENDPOINT=localhost:9005
 export JWT_SECRET=dev_secret
 
 # Run migrations
 python3 -m alembic upgrade head
 
-# Seed the database and blob storage (only needed once)
+# Seed the database (only needed once)
 python3 seed.py
 
 # Start API server
@@ -253,7 +248,6 @@ cf-clone/
 │   │   ├── admin.py         # Admin CRUD routes
 │   │   ├── ws.py            # WebSocket ConnectionManager
 │   │   ├── config.py        # Queue names, env vars
-│   │   ├── blob_storage.py  # MinIO helpers
 │   │   └── db/
 │   │       ├── models.py    # SQLAlchemy ORM models
 │   │       ├── database.py  # Async session factory

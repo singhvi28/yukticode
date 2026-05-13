@@ -44,7 +44,7 @@ python3 -m pytest tests/ -v -s
 | `test_server_config.py` | RabbitMQ queue names, exchange constants, DLX configuration |
 | `test_server_messaging.py` | Async `aio-pika` connection strategy, exchange/queue declarations, Dead Letter Exchange |
 | `test_server_models.py` | Pydantic input models: `SubmitRequest` requires `problem_id`; `RunRequest` shape |
-| `test_server_routes.py` | FastAPI routes: `/submit`, `/run`, `/problems` — mocks RabbitMQ with `AsyncMock`, mocks MinIO, uses in-memory SQLite for DB |
+| `test_server_routes.py` | FastAPI routes: `/submit`, `/run`, `/problems` — mocks RabbitMQ with `AsyncMock`, uses in-memory SQLite for DB |
 | `test_auth_routes.py` | `/auth/register`, `/auth/login` — in-memory SQLite via dependency injection |
 
 ### Worker Unit Tests

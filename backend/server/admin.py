@@ -3,7 +3,7 @@ Admin API Router — /admin/*
 
 All endpoints require is_admin=True on the authenticated user.
 Covers:
-  - Problem CRUD (incl. publish toggle, statement upload to MinIO)
+  - Problem CRUD (incl. publish toggle, statement stored in Postgres)
   - TestCase CRUD + dry-run judging via the existing /run endpoint
   - Contest CRUD + problem assignment
 """
@@ -17,7 +17,6 @@ import uuid
 from server.db.database import get_db_session
 from server.db.models import User, Problem, ProblemVersion, TestCase, Contest, ContestProblem, Submission
 from server.auth import get_current_user
-from server.blob_storage import upload_text
 from server.config import RUN_EXCHANGE, RUN_ROUTING_KEY, REDIS_URL
 from server.ws import manager as ws_manager
 
@@ -156,14 +155,10 @@ async def admin_create_problem(
     db.add(problem)
     await db.flush()  # get problem.id
 
-    # Upload statement to MinIO
-    object_name = f"problem_{problem.id}_v1.md"
-    upload_text("problems", object_name, payload.statement or "")
-
     version = ProblemVersion(
         problem_id=problem.id,
         version_number=1,
-        statement_url=object_name,
+        statement=payload.statement or "",
         time_limit_ms=payload.time_limit_ms,
         memory_limit_mb=payload.memory_limit_mb,
         test_data_path=f"/test_data/problem_{problem.id}/v1",
@@ -196,7 +191,7 @@ async def admin_update_problem(
     if any(v is not None for v in [payload.statement, payload.time_limit_ms, payload.memory_limit_mb]):
         pv = await _get_latest_version(problem_id, db)
         if payload.statement is not None:
-            upload_text("problems", pv.statement_url, payload.statement)
+            pv.statement = payload.statement
         if payload.time_limit_ms is not None:
             pv.time_limit_ms = payload.time_limit_ms
         if payload.memory_limit_mb is not None:

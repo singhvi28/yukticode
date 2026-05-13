@@ -13,7 +13,7 @@ WORKDIR /app
 # Install Python dependencies first (cache layer)
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir python-jose[cryptography] python-multipart minio
+    && pip install --no-cache-dir python-jose[cryptography] python-multipart
 
 # Copy application source
 COPY . .
@@ -22,11 +22,7 @@ COPY . .
 # Default configuration (overridden at runtime via env vars)
 # ---------------------------------------------------------------------------
 ENV DATABASE_URL=postgresql+asyncpg://judge:judge@postgres:5432/judge \
-    RABBITMQ_HOST=rabbitmq \
-    MINIO_ENDPOINT=minio:9000 \
-    MINIO_ACCESS_KEY=minioadmin \
-    MINIO_SECRET_KEY=minioadmin \
-    MINIO_SECURE=false
+    RABBITMQ_HOST=rabbitmq
 
 EXPOSE 9000
 

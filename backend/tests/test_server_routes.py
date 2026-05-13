@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 import json
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock
 from fastapi.testclient import TestClient
 
 
@@ -54,7 +54,7 @@ def prepare_database_sync():
             session.add(u)
             p = Problem(id=1, title="Test", author_id=1, is_published=True)
             session.add(p)
-            pv = ProblemVersion(id=1, problem_id=1, version_number=1, statement_url="url", time_limit_ms=2000, memory_limit_mb=256, test_data_path="path")
+            pv = ProblemVersion(id=1, problem_id=1, version_number=1, statement="Test statement", time_limit_ms=2000, memory_limit_mb=256, test_data_path="path")
             session.add(pv)
             await session.commit()
     asyncio.run(init_db())
@@ -68,29 +68,27 @@ def prepare_database_sync():
 def client():
     """TestClient with mocked dependencies."""
     mock_mq = AsyncMock()
-    with patch('server.routes.upload_text', return_value="mock_code_url"), \
-         patch('server.routes.download_text', return_value="mock_statement_md"):
-        from server.routes import router
-        from fastapi import FastAPI, Request
-        from server.auth import get_current_user
+    from server.routes import router
+    from fastapi import FastAPI
+    from server.auth import get_current_user
 
-        async def override_get_current_user():
-            return User(id=1, username="test", email="test@test.com")
+    async def override_get_current_user():
+        return User(id=1, username="test", email="test@test.com")
 
-        app = FastAPI()
+    app = FastAPI()
 
-        # Attach mock mq to app.state (mirrors lifespan behaviour)
-        @app.on_event("startup")
-        async def startup():
-            app.state.mq = mock_mq
+    # Attach mock mq to app.state (mirrors lifespan behaviour)
+    @app.on_event("startup")
+    async def startup():
+        app.state.mq = mock_mq
 
-        app.include_router(router)
-        app.dependency_overrides[get_current_user] = override_get_current_user
-        app.dependency_overrides[get_db_session] = override_get_db_session
+    app.include_router(router)
+    app.dependency_overrides[get_current_user] = override_get_current_user
+    app.dependency_overrides[get_db_session] = override_get_db_session
 
-        with TestClient(app) as c:
-            c.mock_mq = mock_mq
-            yield c
+    with TestClient(app) as c:
+        c.mock_mq = mock_mq
+        yield c
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from Judger import judger
 from grpc_client import report_submit_verdict
 from server.config import SUBMIT_QUEUE, DLX_EXCHANGE, DLX_SUBMIT_QUEUE
-from server.blob_storage import download_text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,8 +29,7 @@ DATABASE_URL = os.getenv(
 
 async def fetch_submission_data(submission_id: int) -> dict | None:
     """
-    Fetch source code (from blob storage) and test cases (from DB)
-    for the given submission ID.
+    Fetch source code and test cases from DB for the given submission ID.
     """
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from sqlalchemy.future import select
@@ -62,15 +60,11 @@ async def fetch_submission_data(submission_id: int) -> dict | None:
             result_tc = await session.execute(stmt_tc)
             test_cases_rows = result_tc.scalars().all()
 
-            # code_url stores blob object name
-            object_name = submission.code_url.split("/")[-1] if "/" in submission.code_url else submission.code_url
-            src_code = download_text("submissions", object_name)
-
             return {
                 "language": submission.language,
                 "time_limit": pv.time_limit_ms,
                 "memory_limit": pv.memory_limit_mb,
-                "src_code": src_code or "",
+                "src_code": submission.code or "",
                 "test_cases": [
                     {"input": tc.input_data, "expected_output": tc.expected_output}
                     for tc in test_cases_rows
@@ -91,7 +85,7 @@ async def submit_callback(message: aio_pika.abc.AbstractIncomingMessage):
 
         logger.info("Submit worker processing: submission_id=%s, language=%s", submission_id, language)
 
-        # Fetch src_code and test_cases from DB/blob (MQ bloat fix)
+        # Fetch src_code and test_cases from DB
         submission_data = await fetch_submission_data(submission_id)
 
         if not submission_data:
