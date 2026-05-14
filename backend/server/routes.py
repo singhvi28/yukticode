@@ -21,7 +21,7 @@ from .ws import manager as ws_manager
 from server.leaderboard import update_leaderboard_on_verdict
 
 from server.db.database import get_db_session
-from server.db.models import Problem, ProblemVersion, Submission, User, TestCase, Contest, ContestProblem
+from server.db.models import Problem, Submission, User, TestCase, Contest, ContestProblem
 from server.auth import get_current_user
 from urllib.parse import quote
 
@@ -39,23 +39,16 @@ async def submit(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
-    # 1. Fetch ProblemVersion — JOIN Problem to verify is_published (IDOR fix)
-    stmt_version = (
-        select(ProblemVersion, Problem)
-        .join(Problem, Problem.id == ProblemVersion.problem_id)
-        .where(
-            ProblemVersion.problem_id == submit_request.problem_id,
-            Problem.is_published == True,
-        )
-        .order_by(ProblemVersion.version_number.desc())
+    # 1. Fetch published problem
+    stmt = select(Problem).where(
+        Problem.id == submit_request.problem_id,
+        Problem.is_published == True,
     )
-    result_version = await db.execute(stmt_version)
-    row = result_version.first()
+    result = await db.execute(stmt)
+    problem = result.scalars().first()
 
-    if not row:
+    if not problem:
         raise HTTPException(status_code=404, detail="Problem not found or is not published")
-
-    latest_version, problem = row
 
     # 2. Contest timing enforcement (IDOR fix — don't allow early submissions to contest problems)
     if submit_request.contest_id:
@@ -83,7 +76,7 @@ async def submit(
     # 3. Create Submission record (source stored in Postgres)
     new_submission = Submission(
         user_id=current_user.id,
-        problem_version_id=latest_version.id,
+        problem_id=problem.id,
         language=submit_request.language,
         code=submit_request.src_code,
         status="PENDING",
@@ -93,15 +86,14 @@ async def submit(
     await db.commit()
     await db.refresh(new_submission)
 
-    # 5. Enqueue task — send only submission_id; worker fetches test cases from DB
-    # (MQ Message Bloat fix: no src_code or test_cases in the payload)
+    # 4. Enqueue task — send only submission_id; worker fetches test cases from DB
     callback_url = f"http://backend:9000/webhook/submit/{new_submission.id}"
 
     payload = {
         "submission_id": new_submission.id,
         "language": submit_request.language,
-        "time_limit": latest_version.time_limit_ms,
-        "memory_limit": latest_version.memory_limit_mb,
+        "time_limit": problem.time_limit_ms,
+        "memory_limit": problem.memory_limit_mb,
         "callback_url": callback_url,
     }
 
@@ -291,8 +283,7 @@ async def list_problems(db: AsyncSession = Depends(get_db_session)):
             func.count(Submission.id).filter(Submission.status == 'AC').label('ac_count'),
             func.count(Submission.id).label('total_count')
         )
-        .outerjoin(ProblemVersion, ProblemVersion.problem_id == Problem.id)
-        .outerjoin(Submission, Submission.problem_version_id == ProblemVersion.id)
+        .outerjoin(Submission, Submission.problem_id == Problem.id)
         .where(Problem.is_published == True)
         .group_by(Problem.id)
         .order_by(Problem.id)
@@ -347,28 +338,13 @@ async def get_problem(problem_id: int, db: AsyncSession = Depends(get_db_session
                     detail="This problem is locked until the contest starts.",
                 )
 
-    # Get latest version
-    stmt_version = select(ProblemVersion).where(ProblemVersion.problem_id == problem_id).order_by(ProblemVersion.version_number.desc())
-    result_version = await db.execute(stmt_version)
-    latest_version = result_version.scalars().first()
-
-    if not latest_version:
-        return {
-            "id": problem.id,
-            "title": problem.title,
-            "timeLimit": 2000,
-            "memoryLimit": 256,
-            "statement": "No statement available.",
-            "samples": []
-        }
-
-    statement_markdown = latest_version.statement or "No statement available."
+    statement_markdown = problem.statement or "No statement available."
 
     # Sample cases from DB (is_sample=True)
     sample_stmt = (
         select(TestCase)
         .where(
-            TestCase.problem_version_id == latest_version.id,
+            TestCase.problem_id == problem.id,
             TestCase.is_sample == True,
         )
         .order_by(TestCase.id)
@@ -383,8 +359,8 @@ async def get_problem(problem_id: int, db: AsyncSession = Depends(get_db_session
     return {
         "id": problem.id,
         "title": problem.title,
-        "timeLimit": latest_version.time_limit_ms,
-        "memoryLimit": latest_version.memory_limit_mb,
+        "timeLimit": problem.time_limit_ms,
+        "memoryLimit": problem.memory_limit_mb,
         "statement": statement_markdown,
         "samples": samples,
     }
@@ -411,27 +387,22 @@ async def get_submission(submission_id: int, current_user: User = Depends(get_cu
 
 @router.get('/submissions')
 async def list_submissions(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db_session)):
-    # N+1 fix: single JOIN query fetches Submission + ProblemVersion + Problem together
     stmt = (
         select(Submission)
-        .options(
-            joinedload(Submission.problem_version).joinedload(ProblemVersion.problem)
-        )
+        .options(joinedload(Submission.problem))
         .where(Submission.user_id == current_user.id)
         .order_by(Submission.submitted_at.desc())
     )
     result = await db.execute(stmt)
-    # unique() needed when using joinedload to avoid duplicate rows from the JOIN
     submissions = result.unique().scalars().all()
 
     response = []
     for sub in submissions:
-        pv = sub.problem_version
-        problem_title = pv.problem.title if pv and pv.problem else "Unknown"
+        problem_title = sub.problem.title if sub.problem else "Unknown"
 
         response.append({
             "id": sub.id,
-            "problem_id": sub.problem_version_id,
+            "problem_id": sub.problem_id,
             "problem_title": problem_title,
             "status": sub.status,
             "language": sub.language,

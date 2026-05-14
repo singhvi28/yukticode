@@ -21,7 +21,7 @@ from fastapi import FastAPI
 from server.routes import router as api_router
 from server.auth import router as auth_router, get_current_user
 from server.db.database import Base, get_db_session
-from server.db.models import User, Problem, ProblemVersion, Submission
+from server.db.models import User, Problem, Submission
 
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
@@ -164,19 +164,16 @@ class TestSubmissionPollingRequiresAuth:
             headers = {"Authorization": f"Bearer {token}"}
 
             async with session_factory() as session:
-                problem = Problem(title="Dave's Problem", author_id=user_id, is_published=True)
+                problem = Problem(
+                    title="Dave's Problem",
+                    author_id=user_id,
+                    is_published=True,
+                    statement="# Dave's Problem\n",
+                )
                 session.add(problem)
                 await session.flush()
-                pv = ProblemVersion(
-                    problem_id=problem.id, version_number=1,
-                    statement="# Dave's Problem\n",
-                    time_limit_ms=2000, memory_limit_mb=256,
-                    test_data_path="/test_data/p1",
-                )
-                session.add(pv)
-                await session.flush()
                 sub = Submission(
-                    user_id=user_id, problem_version_id=pv.id,
+                    user_id=user_id, problem_id=problem.id,
                     language="py", code="print(1)", status="PENDING",
                 )
                 session.add(sub)
@@ -212,19 +209,16 @@ class TestSubmissionPollingRequiresAuth:
             })).json()["user_id"]
 
             async with session_factory() as session:
-                problem = Problem(title="Frank's Problem", author_id=frank_id, is_published=True)
+                problem = Problem(
+                    title="Frank's Problem",
+                    author_id=frank_id,
+                    is_published=True,
+                    statement="# Frank's Problem\n",
+                )
                 session.add(problem)
                 await session.flush()
-                pv = ProblemVersion(
-                    problem_id=problem.id, version_number=1,
-                    statement="# Frank's Problem\n",
-                    time_limit_ms=2000, memory_limit_mb=256,
-                    test_data_path="/test_data/p2",
-                )
-                session.add(pv)
-                await session.flush()
                 sub = Submission(
-                    user_id=frank_id, problem_version_id=pv.id,
+                    user_id=frank_id, problem_id=problem.id,
                     language="py", code="print(1)", status="AC",
                 )
                 session.add(sub)

@@ -15,7 +15,7 @@ from typing import Optional, List
 import uuid
 
 from server.db.database import get_db_session
-from server.db.models import User, Problem, ProblemVersion, TestCase, Contest, ContestProblem, Submission
+from server.db.models import User, Problem, TestCase, Contest, ContestProblem, Submission
 from server.auth import get_current_user
 from server.config import RUN_EXCHANGE, RUN_ROUTING_KEY, REDIS_URL
 from server.ws import manager as ws_manager
@@ -105,17 +105,12 @@ class ContestProblemAdd(BaseModel):
 # Helper
 # ---------------------------------------------------------------------------
 
-async def _get_latest_version(problem_id: int, db: AsyncSession) -> ProblemVersion:
-    stmt = (
-        select(ProblemVersion)
-        .where(ProblemVersion.problem_id == problem_id)
-        .order_by(ProblemVersion.version_number.desc())
-    )
-    result = await db.execute(stmt)
-    pv = result.scalars().first()
-    if not pv:
-        raise HTTPException(status_code=404, detail="Problem version not found")
-    return pv
+async def _get_problem(problem_id: int, db: AsyncSession) -> Problem:
+    result = await db.execute(select(Problem).where(Problem.id == problem_id))
+    problem = result.scalars().first()
+    if not problem:
+        raise HTTPException(status_code=404, detail="Problem not found")
+    return problem
 
 
 # ---------------------------------------------------------------------------
@@ -151,19 +146,15 @@ async def admin_create_problem(
     if existing.scalars().first():
         raise HTTPException(status_code=409, detail="A problem with this title already exists")
 
-    problem = Problem(title=payload.title, author_id=admin.id, is_published=False)
-    db.add(problem)
-    await db.flush()  # get problem.id
-
-    version = ProblemVersion(
-        problem_id=problem.id,
-        version_number=1,
+    problem = Problem(
+        title=payload.title,
+        author_id=admin.id,
+        is_published=False,
         statement=payload.statement or "",
         time_limit_ms=payload.time_limit_ms,
         memory_limit_mb=payload.memory_limit_mb,
-        test_data_path=f"/test_data/problem_{problem.id}/v1",
     )
-    db.add(version)
+    db.add(problem)
     await db.commit()
     await db.refresh(problem)
 
@@ -177,25 +168,18 @@ async def admin_update_problem(
     admin: User = Depends(admin_required),
     db: AsyncSession = Depends(get_db_session),
 ):
-    result = await db.execute(select(Problem).where(Problem.id == problem_id))
-    problem = result.scalars().first()
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
+    problem = await _get_problem(problem_id, db)
 
     if payload.title is not None:
         problem.title = payload.title
     if payload.is_published is not None:
         problem.is_published = payload.is_published
-
-    # Version fields — update the latest version if provided
-    if any(v is not None for v in [payload.statement, payload.time_limit_ms, payload.memory_limit_mb]):
-        pv = await _get_latest_version(problem_id, db)
-        if payload.statement is not None:
-            pv.statement = payload.statement
-        if payload.time_limit_ms is not None:
-            pv.time_limit_ms = payload.time_limit_ms
-        if payload.memory_limit_mb is not None:
-            pv.memory_limit_mb = payload.memory_limit_mb
+    if payload.statement is not None:
+        problem.statement = payload.statement
+    if payload.time_limit_ms is not None:
+        problem.time_limit_ms = payload.time_limit_ms
+    if payload.memory_limit_mb is not None:
+        problem.memory_limit_mb = payload.memory_limit_mb
 
     await db.commit()
     return {"msg": "updated", "id": problem.id}
@@ -207,25 +191,11 @@ async def admin_delete_problem(
     admin: User = Depends(admin_required),
     db: AsyncSession = Depends(get_db_session),
 ):
-    result = await db.execute(select(Problem).where(Problem.id == problem_id))
-    problem = result.scalars().first()
-    if not problem:
-        raise HTTPException(status_code=404, detail="Problem not found")
+    problem = await _get_problem(problem_id, db)
 
-    # Manually delete child rows that don't have cascade configured
-    # (Submissions and ContestProblems reference Problem indirectly or directly)
-    # ProblemVersion → TestCase already cascades via the ORM relationship.
-    # But Submissions reference ProblemVersion, so we need to handle those.
-    versions = await db.execute(
-        select(ProblemVersion).where(ProblemVersion.problem_id == problem_id)
+    await db.execute(
+        Submission.__table__.delete().where(Submission.problem_id == problem_id)
     )
-    version_ids = [v.id for v in versions.scalars().all()]
-    if version_ids:
-        await db.execute(
-            Submission.__table__.delete().where(Submission.problem_version_id.in_(version_ids))
-        )
-
-    # Delete ContestProblem associations
     await db.execute(
         ContestProblem.__table__.delete().where(ContestProblem.problem_id == problem_id)
     )
@@ -244,9 +214,9 @@ async def admin_list_testcases(
     admin: User = Depends(admin_required),
     db: AsyncSession = Depends(get_db_session),
 ):
-    pv = await _get_latest_version(problem_id, db)
+    await _get_problem(problem_id, db)
     result = await db.execute(
-        select(TestCase).where(TestCase.problem_version_id == pv.id).order_by(TestCase.id)
+        select(TestCase).where(TestCase.problem_id == problem_id).order_by(TestCase.id)
     )
     tcs = result.scalars().all()
     return [
@@ -268,9 +238,9 @@ async def admin_create_testcase(
     admin: User = Depends(admin_required),
     db: AsyncSession = Depends(get_db_session),
 ):
-    pv = await _get_latest_version(problem_id, db)
+    await _get_problem(problem_id, db)
     tc = TestCase(
-        problem_version_id=pv.id,
+        problem_id=problem_id,
         input_data=payload.input_data,
         expected_output=payload.expected_output,
         is_sample=payload.is_sample,
@@ -290,9 +260,9 @@ async def admin_update_testcase(
     admin: User = Depends(admin_required),
     db: AsyncSession = Depends(get_db_session),
 ):
-    pv = await _get_latest_version(problem_id, db)
+    await _get_problem(problem_id, db)
     result = await db.execute(
-        select(TestCase).where(TestCase.id == tc_id, TestCase.problem_version_id == pv.id)
+        select(TestCase).where(TestCase.id == tc_id, TestCase.problem_id == problem_id)
     )
     tc = result.scalars().first()
     if not tc:
@@ -318,9 +288,9 @@ async def admin_delete_testcase(
     admin: User = Depends(admin_required),
     db: AsyncSession = Depends(get_db_session),
 ):
-    pv = await _get_latest_version(problem_id, db)
+    await _get_problem(problem_id, db)
     result = await db.execute(
-        select(TestCase).where(TestCase.id == tc_id, TestCase.problem_version_id == pv.id)
+        select(TestCase).where(TestCase.id == tc_id, TestCase.problem_id == problem_id)
     )
     tc = result.scalars().first()
     if not tc:
@@ -343,9 +313,9 @@ async def admin_run_testcase(
     Stores expected output in Redis keyed by run_id; the gRPC ReportRunVerdict
     handler compares and broadcasts the final AC/WA verdict.
     """
-    pv = await _get_latest_version(problem_id, db)
+    problem = await _get_problem(problem_id, db)
     result = await db.execute(
-        select(TestCase).where(TestCase.id == tc_id, TestCase.problem_version_id == pv.id)
+        select(TestCase).where(TestCase.id == tc_id, TestCase.problem_id == problem_id)
     )
     tc = result.scalars().first()
     if not tc:
@@ -363,8 +333,8 @@ async def admin_run_testcase(
     run_payload = {
         "run_id": run_id,
         "language": payload.language,
-        "time_limit": pv.time_limit_ms,
-        "memory_limit": pv.memory_limit_mb,
+        "time_limit": problem.time_limit_ms,
+        "memory_limit": problem.memory_limit_mb,
         "src_code": payload.src_code,
         "std_in": tc.input_data,
     }

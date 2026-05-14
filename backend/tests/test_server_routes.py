@@ -29,7 +29,7 @@ RUN_PAYLOAD = {
 
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from server.db.database import Base, get_db_session
-from server.db.models import User, Problem, ProblemVersion
+from server.db.models import User, Problem
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -52,10 +52,16 @@ def prepare_database_sync():
             # Insert a dummy user and published problem
             u = User(id=1, username="test", email="test@test.com", hashed_password="pw")
             session.add(u)
-            p = Problem(id=1, title="Test", author_id=1, is_published=True)
+            p = Problem(
+                id=1,
+                title="Test",
+                author_id=1,
+                is_published=True,
+                statement="Test statement",
+                time_limit_ms=2000,
+                memory_limit_mb=256,
+            )
             session.add(p)
-            pv = ProblemVersion(id=1, problem_id=1, version_number=1, statement="Test statement", time_limit_ms=2000, memory_limit_mb=256, test_data_path="path")
-            session.add(pv)
             await session.commit()
     asyncio.run(init_db())
     yield

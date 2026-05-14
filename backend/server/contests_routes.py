@@ -14,7 +14,6 @@ from sqlalchemy.future import select
 from server.auth import get_current_user, get_current_user_optional
 from server.db.database import get_db_session
 from server.db.models import Contest, ContestProblem, ContestRegistration, Problem, Submission, User
-from server.db.models import ProblemVersion
 from server.leaderboard import ContestLeaderboardManager
 from server.ws import manager as ws_manager
 
@@ -64,9 +63,7 @@ async def get_public_contest(
     user_problem_stats = {}
     if current_user:
         sub_result = await db.execute(
-            select(ProblemVersion.problem_id, Submission.status).select_from(Submission)
-            .join(ProblemVersion, ProblemVersion.id == Submission.problem_version_id)
-            .where(
+            select(Submission.problem_id, Submission.status).where(
                 Submission.user_id == current_user.id,
                 Submission.contest_id == contest_id,
             )

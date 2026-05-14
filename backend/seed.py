@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from server.db.database import Base
-from server.db.models import User, Problem, ProblemVersion, TestCase
+from server.db.models import User, Problem, TestCase
 from server.config import DATABASE_URL
 from server.auth import get_password_hash
 
@@ -288,26 +288,17 @@ async def seed():
                 is_published=True,
                 difficulty=spec["difficulty"],
                 tags=json.dumps(spec["tags"]),
+                statement=spec["statement"],
+                time_limit_ms=spec["time_limit_ms"],
+                memory_limit_mb=spec["memory_limit_mb"],
             )
             db.add(problem)
             await db.commit()
             await db.refresh(problem)
 
-            version = ProblemVersion(
-                problem_id=problem.id,
-                version_number=1,
-                statement=spec["statement"],
-                time_limit_ms=spec["time_limit_ms"],
-                memory_limit_mb=spec["memory_limit_mb"],
-                test_data_path=f"/test_data/{spec['slug']}",
-            )
-            db.add(version)
-            await db.commit()
-            await db.refresh(version)
-
             cases = [
                 TestCase(
-                    problem_version_id=version.id,
+                    problem_id=problem.id,
                     input_data=tc["input"],
                     expected_output=tc["expected"],
                     is_sample=tc["sample"],

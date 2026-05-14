@@ -33,7 +33,7 @@ async def fetch_submission_data(submission_id: int) -> dict | None:
     """
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from sqlalchemy.future import select
-    from server.db.models import Submission, ProblemVersion, TestCase
+    from server.db.models import Submission, Problem, TestCase
 
     engine = create_async_engine(DATABASE_URL, echo=False)
     Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -48,22 +48,22 @@ async def fetch_submission_data(submission_id: int) -> dict | None:
                 logger.error("Submission %d not found in DB", submission_id)
                 return None
 
-            stmt_pv = select(ProblemVersion).where(ProblemVersion.id == submission.problem_version_id)
-            result_pv = await session.execute(stmt_pv)
-            pv = result_pv.scalars().first()
+            stmt_p = select(Problem).where(Problem.id == submission.problem_id)
+            result_p = await session.execute(stmt_p)
+            problem = result_p.scalars().first()
 
-            if not pv:
-                logger.error("ProblemVersion for submission %d not found", submission_id)
+            if not problem:
+                logger.error("Problem for submission %d not found", submission_id)
                 return None
 
-            stmt_tc = select(TestCase).where(TestCase.problem_version_id == pv.id)
+            stmt_tc = select(TestCase).where(TestCase.problem_id == problem.id)
             result_tc = await session.execute(stmt_tc)
             test_cases_rows = result_tc.scalars().all()
 
             return {
                 "language": submission.language,
-                "time_limit": pv.time_limit_ms,
-                "memory_limit": pv.memory_limit_mb,
+                "time_limit": problem.time_limit_ms,
+                "memory_limit": problem.memory_limit_mb,
                 "src_code": submission.code or "",
                 "test_cases": [
                     {"input": tc.input_data, "expected_output": tc.expected_output}

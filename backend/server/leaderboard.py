@@ -11,7 +11,7 @@ import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from server.db.models import Contest, ContestProblem, ProblemVersion, Submission, User
+from server.db.models import Contest, ContestProblem, Submission, User
 
 logger = logging.getLogger(__name__)
 
@@ -140,11 +140,7 @@ async def update_leaderboard_on_verdict(
     if not user:
         return
 
-    pv_result = await db.execute(select(ProblemVersion).where(ProblemVersion.id == submission.problem_version_id))
-    pv = pv_result.scalars().first()
-    if not pv:
-        return
-    problem_id = pv.problem_id
+    problem_id = submission.problem_id
 
     contest_result = await db.execute(select(Contest).where(Contest.id == submission.contest_id))
     contest = contest_result.scalars().first()
