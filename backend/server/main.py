@@ -6,8 +6,6 @@ from .routes import router
 from .auth import router as auth_router
 from .admin import router as admin_router
 from .contests_routes import router as contests_router
-from .grpc_server import start_grpc_server
-from .config import GRPC_PORT
 from .messaging import RabbitMQClient
 
 @contextlib.asynccontextmanager
@@ -20,10 +18,8 @@ async def lifespan(app: FastAPI):
 
     from .ws import manager as ws_manager
     await ws_manager.startup()
-    grpc_server = await start_grpc_server(port=GRPC_PORT)
     yield
     # Shutdown
-    await grpc_server.stop(grace=5)
     from .ws import manager as ws_manager
     await ws_manager.shutdown()
     await mq.close()

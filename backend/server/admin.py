@@ -310,7 +310,7 @@ async def admin_run_testcase(
 ):
     """
     Dry-run: enqueue src_code against a specific test case via RabbitMQ.
-    Stores expected output in Redis keyed by run_id; the gRPC ReportRunVerdict
+    Stores expected output in Redis keyed by run_id; the webhook /webhook/run
     handler compares and broadcasts the final AC/WA verdict.
     """
     problem = await _get_problem(problem_id, db)
@@ -323,7 +323,7 @@ async def admin_run_testcase(
 
     run_id = str(uuid.uuid4())
 
-    # Store expected_output before enqueue so the gRPC handler can compare
+    # Store expected_output before enqueue so the webhook can compare
     # even if the worker finishes very quickly.
     r = await _get_redis()
     await r.set(f"admin_run:{run_id}", json.dumps({

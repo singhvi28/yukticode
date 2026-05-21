@@ -23,10 +23,9 @@ app.dependency_overrides[get_db_session] = override_get_db_session
 
 @pytest_asyncio.fixture(loop_scope="function", autouse=True)
 async def mock_rabbitmq(monkeypatch):
-    """Mock MQ / gRPC / WS startup so auth tests do not need a broker."""
+    """Mock MQ / WS startup so auth tests do not need a broker."""
     mock_mq = AsyncMock()
     monkeypatch.setattr("server.main.RabbitMQClient", MagicMock(return_value=mock_mq))
-    monkeypatch.setattr("server.main.start_grpc_server", AsyncMock(return_value=AsyncMock(stop=AsyncMock())))
     monkeypatch.setattr("server.ws.manager.startup", AsyncMock())
     monkeypatch.setattr("server.ws.manager.shutdown", AsyncMock())
 

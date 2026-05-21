@@ -202,7 +202,7 @@ async def webhook_submit(
 async def run(run_request: RunRequest, request: Request):
     """
     Enqueue a custom run execution. Generates a unique run_id and pushes the
-    payload to RabbitMQ. The worker reports the verdict via gRPC using run_id.
+    payload to RabbitMQ. The worker reports the verdict via HTTP webhook.
     """
     run_id = str(uuid.uuid4())
 
@@ -218,7 +218,7 @@ async def run(run_request: RunRequest, request: Request):
 async def run_batch(batch_request: RunBatchRequest, request: Request):
     """
     Enqueue a batch of custom test runs as a single RabbitMQ message.
-    The worker executes all tests and streams per-test results via gRPC
+    The worker executes all tests and posts per-test results via HTTP webhook
     using batch_id as the correlation key for WebSocket clients.
     """
     batch_id = str(uuid.uuid4())
@@ -240,10 +240,49 @@ async def run_batch(batch_request: RunBatchRequest, request: Request):
 @router.post('/webhook/run/{run_id}')
 async def webhook_run(run_id: str, payload: dict = Body(...)):
     """
-    The run worker hits this endpoint to deliver the result of a custom test case.
-    We immediately broadcast the result out to any listening WebSockets.
+    The run worker hits this endpoint to deliver custom-run / batch / admin
+    dry-run results. We broadcast to any listening WebSockets.
     """
-    await ws_manager.broadcast(run_id, payload)
+    # Admin dry-run: compare against expected output stored in Redis
+    if ws_manager.redis:
+        raw = await ws_manager.redis.get(f"admin_run:{run_id}")
+        if raw:
+            pending = json.loads(raw)
+            expected = pending.get("expected_output", "")
+            worker_status = payload.get("status", "SYSTEM_ERROR")
+            std_out = payload.get("std_out", "")
+            if worker_status != "AC":
+                verdict = worker_status
+            else:
+                def _norm(s: str) -> str:
+                    return "\n".join(l.rstrip() for l in s.strip().splitlines())
+                verdict = "AC" if _norm(std_out) == _norm(expected) else "WA"
+
+            result_data = {
+                "worker_status": worker_status,
+                "verdict": verdict,
+                "status": verdict,
+                "std_out": std_out,
+                "expected": expected,
+                "message": "",
+                "execution_time_ms": payload.get("execution_time_ms", 0.0),
+                "peak_memory_mb": payload.get("peak_memory_mb", 0.0),
+            }
+            await ws_manager.redis.set(
+                f"admin_result:{run_id}", json.dumps(result_data), ex=60
+            )
+            await ws_manager.redis.delete(f"admin_run:{run_id}")
+            await ws_manager.broadcast(run_id, result_data)
+            return {"msg": "ok"}
+
+    close_after = True
+    if payload.get("_batch_complete"):
+        close_after = True
+    elif "_close_after" in payload:
+        close_after = bool(payload["_close_after"])
+
+    broadcast_payload = {k: v for k, v in payload.items() if k != "_close_after"}
+    await ws_manager.broadcast(run_id, broadcast_payload, close_after=close_after)
     return {"msg": "ok"}
 
 @router.websocket("/ws/runs/{run_id}")

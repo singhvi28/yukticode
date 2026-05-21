@@ -17,9 +17,6 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 # Internal API URL for workers to reach the backend
 INTERNAL_API_URL = os.getenv("INTERNAL_API_URL", "http://127.0.0.1:9000")
 
-# gRPC server port (workers connect here for verdict callbacks)
-GRPC_PORT = int(os.getenv("GRPC_PORT", "50051"))
-
 # Redis
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 

@@ -9,7 +9,7 @@ import aio_pika
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from Judger import judger
-from grpc_client import report_run_verdict, stream_batch_verdicts
+from http_callback import report_run_verdict, stream_batch_verdicts
 from server.config import RUN_QUEUE, DLX_EXCHANGE, DLX_RUN_QUEUE
 
 logging.basicConfig(
@@ -66,9 +66,9 @@ async def run_callback(message: aio_pika.abc.AbstractIncomingMessage):
                     None,
                     lambda: stream_batch_verdicts(batch_id, _judge_batch())
                 )
-                logger.info("Batch complete — streamed %d results via gRPC for batch_id=%s", len(tests), batch_id)
+                logger.info("Batch complete — posted %d results via webhook for batch_id=%s", len(tests), batch_id)
             except Exception:
-                logger.exception("gRPC stream_batch_verdicts failed for batch_id=%s", batch_id)
+                logger.exception("Webhook stream_batch_verdicts failed for batch_id=%s", batch_id)
             return
 
         # ──── Single run mode ────
@@ -103,9 +103,9 @@ async def run_callback(message: aio_pika.abc.AbstractIncomingMessage):
                     mem_mb=judge_dict.get("peak_memory_mb", 0.0),
                 )
             )
-            logger.info("Run verdict: %s delivered via gRPC for run_id=%s", judge_dict.get("verdict"), run_id)
+            logger.info("Run verdict: %s delivered via webhook for run_id=%s", judge_dict.get("verdict"), run_id)
         except Exception:
-            logger.exception("gRPC report_run_verdict failed for run_id=%s", run_id)
+            logger.exception("Webhook report_run_verdict failed for run_id=%s", run_id)
 
 
 async def main():

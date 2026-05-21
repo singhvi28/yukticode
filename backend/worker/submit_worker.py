@@ -9,7 +9,7 @@ import aio_pika
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from Judger import judger
-from grpc_client import report_submit_verdict
+from http_callback import report_submit_verdict
 from server.config import SUBMIT_QUEUE, DLX_EXCHANGE, DLX_SUBMIT_QUEUE
 
 logging.basicConfig(
@@ -112,22 +112,24 @@ async def submit_callback(message: aio_pika.abc.AbstractIncomingMessage):
         execution_time_ms = judge_result.get("execution_time_ms", 0.0)
         peak_memory_mb = judge_result.get("peak_memory_mb", 0.0)
 
-        logger.info("Verdict: %s (%.1fms, %.1fMB) — reporting via gRPC", verdict, execution_time_ms, peak_memory_mb)
+        logger.info("Verdict: %s (%.1fms, %.1fMB) — reporting via webhook", verdict, execution_time_ms, peak_memory_mb)
 
+        callback_url = data.get("callback_url")
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(
                 None,
-                lambda: report_submit_verdict(
-                    submission_id=submission_id,
-                    status=verdict,
-                    time_ms=execution_time_ms,
-                    mem_mb=peak_memory_mb,
+                lambda sid=submission_id, st=verdict, tm=execution_time_ms, mm=peak_memory_mb, cu=callback_url: report_submit_verdict(
+                    submission_id=sid,
+                    status=st,
+                    time_ms=tm,
+                    mem_mb=mm,
+                    callback_url=cu,
                 )
             )
-            logger.info("Submit verdict delivered via gRPC for submission %s", submission_id)
+            logger.info("Submit verdict delivered via webhook for submission %s", submission_id)
         except Exception:
-            logger.exception("gRPC report_submit_verdict failed for submission %s", submission_id)
+            logger.exception("Webhook report_submit_verdict failed for submission %s", submission_id)
 
 
 async def main():

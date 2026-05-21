@@ -16,12 +16,6 @@ msgpack==1.1.2
 requests==2.32.5
 httpx==0.28.1
 
-# grpc
-
-grpcio==1.78.1
-grpcio-tools==1.71.0
-protobuf==5.29.6
-
 # database
 
 sqlalchemy==2.0.25

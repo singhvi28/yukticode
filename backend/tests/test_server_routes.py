@@ -177,7 +177,7 @@ class TestRunEndpoint:
         assert "run_id" in resp.json()
 
     def test_publish_includes_run_id_matching_response(self, client):
-        """Worker looks up data['run_id'] to report verdict via gRPC."""
+        """Worker looks up data['run_id'] to report verdict via webhook."""
         resp = client.post('/run', json=RUN_PAYLOAD)
         run_id = resp.json()["run_id"]
         args, kwargs = client.mock_mq.publish_message.call_args

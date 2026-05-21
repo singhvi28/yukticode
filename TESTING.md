@@ -51,7 +51,7 @@ python3 -m pytest tests/ -v -s
 
 | File | What it tests |
 |------|---------------|
-| `test_worker_callback.py` | `submit_callback` ACK/NACK behavior; `send_callback` retry logic with exponential back-off. **Mocks return `dict` for `run_judger` (matches updated API).** |
+| `test_worker_callback.py` | `http_callback` helpers: POST submit/run/batch verdicts via mocked `httpx.Client` |
 | `test_worker_messaging.py` | Sync `pika` consumer: `auto_ack=False`, `prefetch_count=1`, queue declare with `passive=True` |
 
 ### Regression Tests
@@ -59,7 +59,7 @@ python3 -m pytest tests/ -v -s
 | File | What it tests | Why it exists |
 |------|---------------|---------------|
 | `test_regression_queue_names.py` | Workers import `SUBMIT_QUEUE`/`RUN_QUEUE` from `server.config`, not hardcoded strings | Bug: hardcoded names caused silent routing mismatches |
-| `test_regression_async_callback.py` | `send_callback` is a sync function using `httpx.Client`; `asyncio.run()` is never called inside pika callbacks. **Updated: `run_judger` and `custom_run` mocks return dict.** | Bug: `asyncio.run()` inside pika callback raises `RuntimeError: loop already running` |
+| `test_regression_async_callback.py` | Workers are async aio_pika consumers; verdicts reported via sync `http_callback` helpers (not `asyncio.run` inside the callback) | Bug: `asyncio.run()` inside pika callback raises `RuntimeError: loop already running` |
 
 ## Mocking Strategy
 

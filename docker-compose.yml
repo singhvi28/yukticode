@@ -100,10 +100,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Expose internally only; Nginx proxies HTTP, workers use gRPC
+    # Expose internally only; Nginx proxies HTTP, workers use HTTP webhooks
     expose:
       - "9000"
-      - "50051"
     healthcheck:
       <<: *hc
       test: [ "CMD", "curl", "-f", "http://localhost:9000/docs" ]
@@ -120,7 +119,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
-      GRPC_BACKEND: backend:50051
+      INTERNAL_API_URL: http://backend:9000
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-judge}:${POSTGRES_PASSWORD:-judge}@postgres:5432/${POSTGRES_DB:-judge}
     volumes:
       # Mount Docker socket so the worker can spawn judger containers
@@ -143,7 +142,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASS: ${RABBITMQ_PASS:-guest}
-      GRPC_BACKEND: backend:50051
+      INTERNAL_API_URL: http://backend:9000
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:

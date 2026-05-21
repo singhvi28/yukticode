@@ -39,7 +39,7 @@ Nginx (port 80)
 1. Browser POSTs to `/api/submit` → JWT authenticated
 2. FastAPI writes a `PENDING` submission (with source code) to PostgreSQL, enqueues a job on RabbitMQ
 3. **`submit_worker`** dequeues the job, loads code + test cases from PostgreSQL, runs it inside an ephemeral Docker container (with strict Isolate sandboxing), collects exact real execution time and peak memory (`max-rss`) from `meta.txt`
-4. Worker POSTs the verdict + stats to `/api/webhook/submit/{id}`
+4. Worker POSTs the verdict + stats to `/webhook/submit/{id}`
 5. Webhook stores the result in PostgreSQL and broadcasts the JSON onto a centralized **Redis Pub/Sub** network.
 6. The exact FastAPI instance holding the user's **WebSocket** receives the Redis broadcast and pushes it in real-time (no polling)
 

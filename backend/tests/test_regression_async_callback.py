@@ -1,9 +1,8 @@
 """
-Regression tests for worker callback architecture after the gRPC migration.
+Regression tests for worker callback architecture after restoring HTTP webhooks.
 
 Workers use async aio_pika handlers and report verdicts via synchronous
-gRPC helpers (report_submit_verdict / report_run_verdict) — not HTTP
-send_callback + asyncio.run() inside a pika callback.
+http_callback helpers (report_submit_verdict / report_run_verdict).
 """
 import sys
 import os
@@ -16,10 +15,9 @@ import pytest
 def _import_worker(module_name: str):
     """Import a worker module with a clean module cache."""
     for key in list(sys.modules):
-        if key in ('submit_worker', 'run_worker'):
+        if key in ('submit_worker', 'run_worker', 'http_callback'):
             del sys.modules[key]
 
-    # Workers live under backend/worker; ensure that path is importable
     worker_dir = os.path.join(os.path.dirname(__file__), '..', 'worker')
     backend_dir = os.path.join(os.path.dirname(__file__), '..')
     sys.path.insert(0, worker_dir)
@@ -39,16 +37,8 @@ class TestWorkerCallbacksAreAsync:
         assert inspect.iscoroutinefunction(rw.run_callback)
 
 
-class TestWorkersReportViaGrpc:
-    """HTTP send_callback is gone — verdicts go through grpc_client."""
-
-    def test_submit_worker_has_no_send_callback(self):
-        sw = _import_worker('submit_worker')
-        assert not hasattr(sw, 'send_callback')
-
-    def test_run_worker_has_no_send_callback(self):
-        rw = _import_worker('run_worker')
-        assert not hasattr(rw, 'send_callback')
+class TestWorkersReportViaHttp:
+    """Verdicts go through http_callback."""
 
     def test_submit_worker_imports_report_submit_verdict(self):
         sw = _import_worker('submit_worker')
@@ -60,9 +50,9 @@ class TestWorkersReportViaGrpc:
         assert callable(rw.stream_batch_verdicts)
 
 
-class TestSubmitCallbackReportsGrpc:
+class TestSubmitCallbackReportsHttp:
     @pytest.mark.asyncio
-    async def test_reports_verdict_via_grpc_on_success(self):
+    async def test_reports_verdict_via_http_on_success(self):
         sw = _import_worker('submit_worker')
 
         message = AsyncMock()
@@ -71,6 +61,7 @@ class TestSubmitCallbackReportsGrpc:
             "language": "py",
             "time_limit": 2000,
             "memory_limit": 256,
+            "callback_url": "http://backend:9000/webhook/submit/7",
         })
         message.process = MagicMock(return_value=AsyncMock(
             __aenter__=AsyncMock(),
@@ -95,4 +86,5 @@ class TestSubmitCallbackReportsGrpc:
             status="AC",
             time_ms=10.0,
             mem_mb=5.0,
+            callback_url="http://backend:9000/webhook/submit/7",
         )
