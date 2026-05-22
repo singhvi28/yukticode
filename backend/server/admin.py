@@ -80,7 +80,6 @@ class TestCaseUpdate(BaseModel):
 class TestCaseRunRequest(BaseModel):
     language: str = "py"
     src_code: str
-    callback_url: str = "http://127.0.0.1:9000/admin/run-callback"
 
 class ContestCreate(BaseModel):
     title: str

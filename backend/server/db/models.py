@@ -20,8 +20,6 @@ class User(Base):
     is_active = Column(Boolean, default=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
-    total_submissions = Column(Integer, default=0)
-    rating = Column(Integer, default=1500)
 
     # Relationships
     problems = relationship("Problem", back_populates="author")
@@ -91,9 +89,6 @@ class Submission(Base):
     status = Column(String(20), default="PENDING")  # e.g., PENDING, AC, WA, CE, TLE, MLE, RE
     execution_time_ms = Column(Float, nullable=True)
     peak_memory_mb = Column(Float, nullable=True)
-
-    # E.g callback tracking if needed
-    callback_url = Column(String, nullable=True)
 
     submitted_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc))
 

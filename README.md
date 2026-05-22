@@ -23,7 +23,7 @@ Nginx (port 80)
   ├── /ws/*   ──────► FastAPI WebSocket        ▲
   │                     │                      │
   │                     ▼                   RabbitMQ
-  │            [ Redis Pub/Sub ]               │
+  │              Redis (cache / pub)           │
   │                     ▲                      │
   └── /*      ──────► Vite SPA (React)         │
                                                │
@@ -38,10 +38,9 @@ Nginx (port 80)
 ### Request lifecycle (Code Submission)
 1. Browser POSTs to `/api/submit` → JWT authenticated
 2. FastAPI writes a `PENDING` submission (with source code) to PostgreSQL, enqueues a job on RabbitMQ
-3. **`submit_worker`** dequeues the job, loads code + test cases from PostgreSQL, runs it inside an ephemeral Docker container (with strict Isolate sandboxing), collects exact real execution time and peak memory (`max-rss`) from `meta.txt`
+3. **`submit_worker`** dequeues the job, loads code + test cases from PostgreSQL, runs it inside an ephemeral Docker container, and collects execution time / peak memory
 4. Worker POSTs the verdict + stats to `/webhook/submit/{id}`
-5. Webhook stores the result in PostgreSQL and broadcasts the JSON onto a centralized **Redis Pub/Sub** network.
-6. The exact FastAPI instance holding the user's **WebSocket** receives the Redis broadcast and pushes it in real-time (no polling)
+5. Webhook stores the result in PostgreSQL, updates contest leaderboard state in Redis when applicable, and pushes the verdict over WebSocket (with a short Redis cache for late subscribers)
 
 ---
 
@@ -49,13 +48,13 @@ Nginx (port 80)
 
 | Area | Details |
 |------|---------|
-| **Judge** | AC / WA / TLE / MLE / CE / RE — exact resource stats driven by `isolate` sandbox |
-| **Real-time** | WebSocket push from Webhook → Redis Backplane → browser (polling fallback for reliability) |
+| **Judge** | AC / WA / TLE / MLE / CE / RE — Docker-sandboxed runs with time/memory limits |
+| **Real-time** | WebSocket verdict push after the worker webhook (HTTP polling fallback on the problem page) |
 | **Languages** | Python 3, C++ |
 | **Admin Panel** | Problem CRUD, test case management, dry-run per test case, contest CRUD |
 | **Auth** | JWT-based register/login; `is_admin` flag for admin routes |
 | **Storage** | Problem statements + submission code stored in PostgreSQL |
-| **Security** | Static analysis (forbidden patterns), sandboxed containers, network disabled |
+| **Security** | Sandboxed judge containers with network disabled |
 
 ---
 
@@ -158,7 +157,7 @@ VITE_API_URL=http://127.0.0.1:9000
 | `frontend/nginx.conf` | SPA fallback, `/api/*` proxy, `/ws/*` WebSocket upgrade |
 | `backend/Dockerfile` | Python 3.12-slim; runs `alembic upgrade head` then `uvicorn` |
 | `backend/Dockerfile.worker` | Two build targets: `submit_worker` and `run_worker`; mounts Docker socket |
-| `docker-compose.yml` | Orchestrates all 8 services with health-checks and dependency ordering (includes Redis) |
+| `docker-compose.yml` | Orchestrates postgres, rabbitmq, redis, backend, two judge workers, celery reaper pair, and frontend |
 | `.env.example` | Template for required environment variables |
 
 ---
@@ -255,6 +254,7 @@ cf-clone/
 │   ├── worker/
 │   │   ├── submit_worker.py # Async aio_pika worker for code submissions
 │   │   ├── run_worker.py    # Async aio_pika worker for custom runs
+│   │   ├── http_callback.py # HTTP webhook helpers for verdict reporting
 │   │   └── Judger/
 │   │       ├── judger.py       # run_judger, custom_run (returns stats dict)
 │   │       ├── docker_manager.py

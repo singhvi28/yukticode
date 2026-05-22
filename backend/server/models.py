@@ -15,7 +15,6 @@ class RunRequest(BaseModel):
     memory_limit: int
     src_code: str = Field(..., max_length=65536)
     std_in: str = " "
-    callback_url: Optional[str] = None
 
 
 class RunBatchTestCase(BaseModel):

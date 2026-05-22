@@ -17,11 +17,11 @@ const ProfilePage = () => {
     );
   }
 
-  // Derived mock stats (In a real app, these come from backend)
+  // Placeholder stats until a real profile API exists
   const stats = {
-    rating: user.rating || 1500,
-    solved: user.total_submissions || 42,
-    rank: 'Specialist',
+    rating: 1500,
+    solved: 0,
+    rank: 'Unrated',
     joinDate: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
   };
 

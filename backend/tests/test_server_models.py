@@ -54,7 +54,6 @@ RUN_DEFAULTS = dict(
     time_limit=5,
     memory_limit=128,
     src_code="print(42)",
-    callback_url="http://localhost:8080/callback",
 )
 
 
@@ -69,13 +68,8 @@ def test_run_request_custom_stdin():
     assert req.std_in == "hello"
 
 
-def test_run_request_missing_callback_url_is_allowed():
-    data = {k: v for k, v in RUN_DEFAULTS.items() if k != "callback_url"}
-    req = RunRequest(**data)
-    assert req.callback_url is None
-
 def test_run_request_dict_round_trip():
     req = RunRequest(**RUN_DEFAULTS)
     d = req.model_dump()
-    assert d["callback_url"] == RUN_DEFAULTS["callback_url"]
     assert d["language"] == "py"
+    assert "callback_url" not in d
