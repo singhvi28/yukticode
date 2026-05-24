@@ -10,26 +10,25 @@ const SubmissionsPage = () => {
     const { user } = useAuth();
 
     useEffect(() => {
+        if (!user) {
+            setLoading(false);
+            setSubmissions([]);
+            return;
+        }
         const fetchSubmissions = async () => {
             try {
                 const response = await api.get('/submissions');
                 setSubmissions(response.data);
             } catch (error) {
                 console.error("Failed to fetch submissions", error);
-                // Fallback mock data
-                setSubmissions([
-                    { id: 1042, problem_id: 1, problem_title: 'Two Sum', status: 'AC', language: 'python', time: '45ms', memory: '14MB', date: new Date().toISOString() },
-                    { id: 1041, problem_id: 1, problem_title: 'Two Sum', status: 'WA', language: 'python', time: '12ms', memory: '14MB', date: new Date(Date.now() - 3600000).toISOString() },
-                    { id: 1040, problem_id: 3, problem_title: 'Longest Substring...', status: 'TLE', language: 'cpp', time: '2010ms', memory: '8MB', date: new Date(Date.now() - 86400000).toISOString() },
-                    { id: 1039, problem_id: 4, problem_title: 'Median of Two...', status: 'AC', language: 'cpp', time: '8ms', memory: '5MB', date: new Date(Date.now() - 172800000).toISOString() },
-                ]);
+                setSubmissions([]);
             } finally {
                 setLoading(false);
             }
         };
 
         fetchSubmissions();
-    }, []);
+    }, [user]);
 
     const getStatusBadge = (status) => {
         switch (status) {

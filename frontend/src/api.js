@@ -1,7 +1,5 @@
 import axios from 'axios';
 
-// Base URL points to the FastAPI server running on localhost:9000
-// Note: As per the README, the server runs on 9000
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:9000';
 
 const api = axios.create({
@@ -10,6 +8,16 @@ const api = axios.create({
         'Content-Type': 'application/json',
     },
 });
+
+/** WebSocket base URL matching the API origin (Docker Nginx /ws or absolute API host). */
+export function getWsUrl() {
+    const base = import.meta.env.VITE_API_URL || 'http://127.0.0.1:9000';
+    if (base.startsWith('/')) {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${proto}//${window.location.host}/ws`;
+    }
+    return base.replace(/^http/, 'ws');
+}
 
 // Add a request interceptor to inject the JWT token if present
 api.interceptors.request.use(
@@ -29,10 +37,8 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        // If the server returns 401 Unauthorized, we clear the token and force logout (if applicable)
         if (error.response && error.response.status === 401) {
             localStorage.removeItem('access_token');
-            // Optionally trigger a custom event that auth context can listen to
             window.dispatchEvent(new Event('auth:unauthorized'));
         }
         return Promise.reject(error);

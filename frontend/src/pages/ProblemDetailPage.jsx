@@ -3,7 +3,7 @@ import { useParams, useSearchParams, Link } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { Play, Send, Loader, Clock, Cpu, CheckCircle, XCircle, Zap, Plus, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import api from '../api';
+import api, { getWsUrl } from '../api';
 import { useAuth } from '../context/AuthContext';
 
 const ProblemDetailPage = () => {
@@ -15,6 +15,7 @@ const ProblemDetailPage = () => {
   const [problem, setProblem] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lockedMessage, setLockedMessage] = useState(null);
+  const [loadError, setLoadError] = useState(null);
 
   // Editor State
   const [language, setLanguage] = useState('python');
@@ -46,28 +47,21 @@ const ProblemDetailPage = () => {
   useEffect(() => {
     const fetchProblem = async () => {
       setLockedMessage(null);
+      setLoadError(null);
       try {
         const response = await api.get(`/problems/${id}`);
         setProblem(response.data);
       } catch (err) {
         console.error("Failed to fetch problem", err);
+        setProblem(null);
         if (err.response?.status === 403 && err.response?.data?.detail) {
           setLockedMessage(err.response.data.detail === "This problem is locked until the contest starts."
             ? "This problem is locked until the contest starts."
             : err.response.data.detail);
-          setProblem(null);
+        } else if (err.response?.status === 404) {
+          setLoadError('Problem not found.');
         } else {
-          setProblem({
-            id,
-            title: "Two Sum",
-            timeLimit: 2000,
-            memoryLimit: 256,
-            statement: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to `target`.\n\nYou may assume that each input would have exactly one solution, and you may not use the same element twice.\n\nYou can return the answer in any order.",
-            samples: [
-              { id: 1, input: "4\n2 7 11 15\n9", output: "0 1" },
-              { id: 2, input: "3\n3 2 4\n6", output: "1 2" }
-            ]
-          });
+          setLoadError('Failed to load this problem.');
         }
       } finally {
         setLoading(false);
@@ -87,13 +81,7 @@ const ProblemDetailPage = () => {
     });
   };
 
-  // Build the WebSocket base URL.
-  // - In Docker (VITE_API_URL="/api"), route to Nginx's /ws/ block directly.
-  // - In local dev (VITE_API_URL absent or absolute), do the http→ws swap.
-  const _apiBase = import.meta.env.VITE_API_URL || 'http://127.0.0.1:9000';
-  const WS_URL = _apiBase.startsWith('/')
-    ? `ws://${window.location.host}/ws`
-    : _apiBase.replace(/^http/, 'ws');
+  const WS_URL = getWsUrl();
 
   const handleSubmit = async () => {
     if (!user) {
@@ -137,8 +125,6 @@ const ProblemDetailPage = () => {
         status: data.status,
         time: data.execution_time_ms ? `${data.execution_time_ms.toFixed(1)}ms` : '-',
         memory: data.peak_memory_mb ? `${data.peak_memory_mb.toFixed(1)}MB` : '-',
-        passed: data.status === 'AC' ? 15 : 0,
-        total: 15,
         message: data.message || (data.status !== 'AC' ? `Verdict: ${data.status}` : '')
       });
       setSubmitting(false);
@@ -390,7 +376,7 @@ const ProblemDetailPage = () => {
       </div>
     );
   }
-  if (!problem) return <div className="error-screen">Problem not found</div>;
+  if (!problem) return <div className="error-screen">{loadError || 'Problem not found'}</div>;
 
   return (
     <div className="problem-detail-container">
@@ -510,7 +496,6 @@ const ProblemDetailPage = () => {
                 <div className="console-stats">
                   <div className="stat"><span>Time:</span> {result.time}</div>
                   <div className="stat"><span>Memory:</span> {result.memory}</div>
-                  <div className="stat"><span>Test Cases:</span> {result.passed}/{result.total}</div>
                 </div>
               )}
               {result.message && <pre className="console-message" style={{

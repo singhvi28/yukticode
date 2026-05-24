@@ -6,23 +6,20 @@ import api from '../api';
 const ProblemsPage = () => {
     const [problems, setProblems] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const [difficultyFilter, setDifficultyFilter] = useState('All');
 
     useEffect(() => {
         const fetchProblems = async () => {
             try {
                 const response = await api.get('/problems');
                 setProblems(response.data);
-            } catch (error) {
-                console.error("Failed to fetch problems", error);
-                // Fallback dummy data for UI development before backend is ready
-                setProblems([
-                    { id: 1, title: 'Two Sum', difficulty: 'Easy', acceptance: 65.4, tags: ['Array', 'Hash Table'] },
-                    { id: 2, title: 'Add Two Numbers', difficulty: 'Medium', acceptance: 42.1, tags: ['Linked List', 'Math'] },
-                    { id: 3, title: 'Longest Substring Without Repeating Characters', difficulty: 'Medium', acceptance: 34.2, tags: ['String', 'Sliding Window'] },
-                    { id: 4, title: 'Median of Two Sorted Arrays', difficulty: 'Hard', acceptance: 38.6, tags: ['Array', 'Binary Search'] },
-                    { id: 5, title: 'Longest Palindromic Substring', difficulty: 'Medium', acceptance: 33.1, tags: ['String', 'Dynamic Programming'] },
-                ]);
+                setError(null);
+            } catch (err) {
+                console.error("Failed to fetch problems", err);
+                setProblems([]);
+                setError('Failed to load problems. Is the API running?');
             } finally {
                 setLoading(false);
             }
@@ -31,9 +28,12 @@ const ProblemsPage = () => {
         fetchProblems();
     }, []);
 
-    const filteredProblems = problems.filter(p =>
-        p.title.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredProblems = problems.filter(p => {
+        const matchesSearch = p.title.toLowerCase().includes(searchTerm.toLowerCase());
+        const diff = (p.difficulty || 'Medium');
+        const matchesDiff = difficultyFilter === 'All' || diff === difficultyFilter;
+        return matchesSearch && matchesDiff;
+    });
 
     return (
         <div className="container problems-page animate-fade-in">
@@ -52,9 +52,20 @@ const ProblemsPage = () => {
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
-                <button className="btn btn-secondary">
+                <button className="btn btn-secondary" type="button" disabled title="Use the difficulty filter">
                     <Filter size={18} /> Filters
                 </button>
+                <select
+                    className="difficulty-filter"
+                    value={difficultyFilter}
+                    onChange={(e) => setDifficultyFilter(e.target.value)}
+                    aria-label="Filter by difficulty"
+                >
+                    <option value="All">All difficulties</option>
+                    <option value="Easy">Easy</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Hard">Hard</option>
+                </select>
             </div>
 
             <div className="table-container glass-card">
@@ -63,8 +74,11 @@ const ProblemsPage = () => {
                         <Loader size={32} className="spinner" />
                         <p>Loading problems...</p>
                     </div>
-                ) : (
-                    <table className="problems-table">
+                ) : error ? (
+                    <div className="loading-state">
+                        <p>{error}</p>
+                    </div>
+                ) : (                    <table className="problems-table">
                         <thead>
                             <tr>
                                 <th width="8%">#</th>
@@ -133,9 +147,20 @@ const ProblemsPage = () => {
         .controls-bar {
           display: flex;
           justify-content: space-between;
+          align-items: center;
           padding: 1rem;
           margin-bottom: 2rem;
           gap: 1rem;
+          flex-wrap: wrap;
+        }
+
+        .difficulty-filter {
+          background: rgba(15, 23, 42, 0.5);
+          border: 1px solid var(--border-color);
+          border-radius: 0.5rem;
+          color: var(--text-primary);
+          padding: 0.65rem 0.85rem;
+          font-family: inherit;
         }
 
         .search-box {

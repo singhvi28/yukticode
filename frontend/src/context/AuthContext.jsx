@@ -16,7 +16,7 @@ export const AuthProvider = ({ children }) => {
         }
 
         try {
-            // Endpoint we will add to the backend to verify token and fetch user details
+            // Verify the session token and load the current user
             const response = await api.get('/auth/me');
             setUser(response.data);
         } catch (err) {

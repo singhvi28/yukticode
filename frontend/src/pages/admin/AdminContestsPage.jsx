@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Plus, Trash2, Eye, EyeOff, ChevronRight, Loader, AlertCircle, CheckCircle, Trophy, X } from 'lucide-react';
 import api from '../../api';
 
@@ -12,8 +11,9 @@ const AdminContestsPage = () => {
     const [editId, setEditId] = useState(null); // expanded contest id
     const [form, setForm] = useState({ title: '', description: '', start_time: '', end_time: '' });
     const [saving, setSaving] = useState(false);
-    const [addProblemMap, setAddProblemMap] = useState({}); // contest_id -> { problem_id, score, display_order }
-    const navigate = useNavigate();
+    const [addProblemMap, setAddProblemMap] = useState({});
+    const [contestProblems, setContestProblems] = useState({});
+    const [editForm, setEditForm] = useState(null);
 
     const showToast = (msg, ok = true) => { setToast({ msg, ok }); setTimeout(() => setToast(null), 3000); };
 
@@ -69,18 +69,67 @@ const AdminContestsPage = () => {
         } catch { showToast('Delete failed', false); }
     };
 
+    const toLocalInput = (iso) => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
     const expandContest = async (id) => {
-        if (editId === id) { setEditId(null); return; }
+        if (editId === id) {
+            setEditId(null);
+            setEditForm(null);
+            return;
+        }
         setEditId(id);
-        // Fetch fresh detail — already in list so this just refreshes
+        try {
+            const r = await api.get(`/admin/contests/${id}`);
+            setContestProblems((m) => ({ ...m, [id]: r.data.problems || [] }));
+            setEditForm({
+                id,
+                title: r.data.title || '',
+                description: r.data.description || '',
+                start_time: toLocalInput(r.data.start_time),
+                end_time: toLocalInput(r.data.end_time),
+            });
+        } catch {
+            showToast('Failed to load contest details', false);
+        }
+    };
+
+    const saveContestMeta = async (e) => {
+        e.preventDefault();
+        if (!editForm) return;
+        setSaving(true);
+        try {
+            await api.patch(`/admin/contests/${editForm.id}`, {
+                title: editForm.title,
+                description: editForm.description,
+                start_time: editForm.start_time ? new Date(editForm.start_time).toISOString() : null,
+                end_time: editForm.end_time ? new Date(editForm.end_time).toISOString() : null,
+            });
+            showToast('Contest updated');
+            fetchAll();
+        } catch (err) {
+            showToast(err.response?.data?.detail || 'Update failed', false);
+        } finally {
+            setSaving(false);
+        }
     };
 
     const addProblemToContest = async (contestId) => {
         const opts = addProblemMap[contestId] || { problem_id: '', score: 100, display_order: 0 };
         if (!opts.problem_id) { showToast('Select a problem first', false); return; }
         try {
-            await api.post(`/admin/contests/${contestId}/problems`, { problem_id: +opts.problem_id, score: +opts.score, display_order: +opts.display_order });
+            await api.post(`/admin/contests/${contestId}/problems`, {
+                problem_id: +opts.problem_id,
+                score: +opts.score,
+                display_order: +opts.display_order,
+            });
             showToast('Problem added to contest');
+            const r = await api.get(`/admin/contests/${contestId}`);
+            setContestProblems((m) => ({ ...m, [contestId]: r.data.problems || [] }));
             fetchAll();
         } catch (e) { showToast(e.response?.data?.detail || 'Failed', false); }
     };
@@ -89,7 +138,10 @@ const AdminContestsPage = () => {
         try {
             await api.delete(`/admin/contests/${contestId}/problems/${problemId}`);
             showToast('Removed');
-            fetchAll();
+            setContestProblems((m) => ({
+                ...m,
+                [contestId]: (m[contestId] || []).filter((p) => p.id !== problemId),
+            }));
         } catch { showToast('Failed', false); }
     };
 
@@ -192,16 +244,49 @@ const AdminContestsPage = () => {
                                 {isExpanded && (
                                     <div className="contest-detail">
                                         <div className="detail-divider" />
-                                        <h4 className="detail-title">Problems in this contest</h4>
+                                        {editForm && editForm.id === c.id && (
+                                            <form className="meta-edit" onSubmit={saveContestMeta}>
+                                                <h4 className="detail-title">Edit contest</h4>
+                                                <div className="form-grid-2">
+                                                    <div className="form-row full">
+                                                        <label>Title</label>
+                                                        <input value={editForm.title} onChange={e => setEditForm(f => ({ ...f, title: e.target.value }))} required />
+                                                    </div>
+                                                    <div className="form-row full">
+                                                        <label>Description</label>
+                                                        <textarea rows={2} value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} />
+                                                    </div>
+                                                    <div className="form-row">
+                                                        <label>Start</label>
+                                                        <input type="datetime-local" value={editForm.start_time} onChange={e => setEditForm(f => ({ ...f, start_time: e.target.value }))} />
+                                                    </div>
+                                                    <div className="form-row">
+                                                        <label>End</label>
+                                                        <input type="datetime-local" value={editForm.end_time} onChange={e => setEditForm(f => ({ ...f, end_time: e.target.value }))} />
+                                                    </div>
+                                                </div>
+                                                <button type="submit" className="btn btn-secondary" disabled={saving} style={{ alignSelf: 'flex-start', fontSize: '0.8rem' }}>
+                                                    {saving ? <Loader size={13} className="spin" /> : null} Save metadata
+                                                </button>
+                                            </form>
+                                        )}
 
-                                        {/* Current problems */}
+                                        <h4 className="detail-title">Problems in this contest</h4>
                                         <div className="problems-in-contest">
-                                            {(c.contest_problems || []).length === 0 && (
+                                            {(contestProblems[c.id] || []).length === 0 && (
                                                 <p className="empty-msg">No problems assigned yet.</p>
                                             )}
+                                            {(contestProblems[c.id] || []).map((p) => (
+                                                <div className="assigned-prob" key={p.id}>
+                                                    <span>{p.title}</span>
+                                                    <span className="prob-meta">score {p.score} · order {p.display_order}</span>
+                                                    <button type="button" className="icon-btn del" onClick={() => removeProblemFromContest(c.id, p.id)} title="Remove">
+                                                        <Trash2 size={13} />
+                                                    </button>
+                                                </div>
+                                            ))}
                                         </div>
 
-                                        {/* Add problem form */}
                                         <div className="add-prob-row">
                                             <select
                                                 value={pMap.problem_id || ''}
@@ -293,6 +378,10 @@ const AdminContestsPage = () => {
         .detail-divider { border: none; border-top: 1px solid var(--border-color); margin: 0; }
         .detail-title { font-size: 0.85rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
         .empty-msg { color: var(--text-muted); font-size: 0.85rem; }
+        .problems-in-contest { display: flex; flex-direction: column; gap: 0.45rem; }
+        .assigned-prob { display: flex; align-items: center; gap: 0.75rem; padding: 0.45rem 0.6rem; background: rgba(15,23,42,0.45); border-radius: 0.4rem; font-size: 0.875rem; }
+        .assigned-prob .prob-meta { color: var(--text-muted); font-size: 0.75rem; margin-left: auto; }
+        .meta-edit { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 0.5rem; }
 
         .add-prob-row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
         .prob-select { background: rgba(15,23,42,0.7); border: 1px solid var(--border-color); border-radius: 0.45rem; color: var(--text-primary); padding: 0.4rem 0.6rem; font-family: inherit; font-size: 0.85rem; flex: 1; min-width: 160px; }

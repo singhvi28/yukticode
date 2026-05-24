@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Trash2, Play, Loader, Save, AlertCircle, CheckCircle, FlaskConical } from 'lucide-react';
-import api from '../../api';
+import api, { getWsUrl } from '../../api';
 
 const VERDICTS = {
     AC: { label: 'Accepted', color: 'var(--success)' },
@@ -38,13 +38,26 @@ const AdminProblemEditPage = () => {
     useEffect(() => {
         const init = async () => {
             try {
-                const [probR, tcR] = await Promise.all([
-                    api.get(`/problems/${id}`),
-                    api.get(`/admin/problems/${id}/testcases`),
-                ]);
-                const prob = probR.data;
-                setMeta({ title: prob.title, time_limit_ms: prob.timeLimit || 2000, memory_limit_mb: prob.memoryLimit || 256 });
-                setStatement(prob.statement || '');
+                let title = '';
+                let time_limit_ms = 2000;
+                let memory_limit_mb = 256;
+                let stmt = '';
+                try {
+                    const probR = await api.get(`/problems/${id}`);
+                    const prob = probR.data;
+                    title = prob.title;
+                    time_limit_ms = prob.timeLimit || 2000;
+                    memory_limit_mb = prob.memoryLimit || 256;
+                    stmt = prob.statement || '';
+                } catch {
+                    // Public GET can 403 for contest-locked problems — fall back to admin list.
+                    const listR = await api.get('/admin/problems');
+                    const row = (listR.data || []).find((p) => String(p.id) === String(id));
+                    if (row) title = row.title;
+                }
+                const tcR = await api.get(`/admin/problems/${id}/testcases`);
+                setMeta({ title, time_limit_ms, memory_limit_mb });
+                setStatement(stmt);
                 setTestCases(tcR.data);
             } catch {
                 showToast('Failed to load problem', false);
@@ -91,6 +104,24 @@ const AdminProblemEditPage = () => {
         }
     };
 
+    const saveTestCase = async (tc) => {
+        try {
+            await api.put(`/admin/problems/${id}/testcases/${tc.id}`, {
+                input_data: tc.input_data,
+                expected_output: tc.expected_output,
+                is_sample: tc.is_sample,
+                score: tc.score,
+            });
+            showToast('Test case updated');
+        } catch {
+            showToast('Update failed', false);
+        }
+    };
+
+    const updateTcField = (tcId, field, value) => {
+        setTestCases((prev) => prev.map((t) => (t.id === tcId ? { ...t, [field]: value } : t)));
+    };
+
     const runTestCase = async (tc) => {
         const state = runState[tc.id] || {};
         if (!state.src_code) {
@@ -106,9 +137,7 @@ const AdminProblemEditPage = () => {
             const runId = r.data.run_id;
             setRunState(prev => ({ ...prev, [tc.id]: { ...prev[tc.id], runId } }));
 
-            // Use WebSocket for real-time result delivery
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/runs/${runId}`);
+            const ws = new WebSocket(`${getWsUrl()}/ws/runs/${runId}`);
             let resolved = false;
 
             ws.onmessage = (event) => {
@@ -284,12 +313,42 @@ const AdminProblemEditPage = () => {
                                 <div className="tc-io">
                                     <div className="io-block">
                                         <span className="io-label">Input</span>
-                                        <pre className="io-pre">{tc.input_data || '(empty)'}</pre>
+                                        <textarea
+                                            className="io-edit"
+                                            rows={4}
+                                            value={tc.input_data || ''}
+                                            onChange={(e) => updateTcField(tc.id, 'input_data', e.target.value)}
+                                        />
                                     </div>
                                     <div className="io-block">
                                         <span className="io-label">Expected Output</span>
-                                        <pre className="io-pre">{tc.expected_output || '(empty)'}</pre>
+                                        <textarea
+                                            className="io-edit"
+                                            rows={4}
+                                            value={tc.expected_output || ''}
+                                            onChange={(e) => updateTcField(tc.id, 'expected_output', e.target.value)}
+                                        />
                                     </div>
+                                </div>
+                                <div className="tc-edit-row">
+                                    <label className="checkbox-label">
+                                        <input
+                                            type="checkbox"
+                                            checked={!!tc.is_sample}
+                                            onChange={(e) => updateTcField(tc.id, 'is_sample', e.target.checked)}
+                                        />
+                                        Sample
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        className="score-edit"
+                                        value={tc.score ?? 10}
+                                        onChange={(e) => updateTcField(tc.id, 'score', Math.max(0, +e.target.value))}
+                                    />
+                                    <button type="button" className="btn btn-secondary" style={{ fontSize: '0.8rem' }} onClick={() => saveTestCase(tc)}>
+                                        <Save size={13} /> Save case
+                                    </button>
                                 </div>
 
                                 {/* Dry-run panel */}
@@ -386,6 +445,9 @@ const AdminProblemEditPage = () => {
         .io-block { display: flex; flex-direction: column; gap: 0.35rem; }
         .io-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); font-weight: 700; }
         .io-pre { background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 0.5rem; padding: 0.6rem 0.8rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; margin: 0; max-height: 120px; overflow-y: auto; }
+        .io-edit { width: 100%; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 0.5rem; padding: 0.6rem 0.8rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-primary); resize: vertical; }
+        .tc-edit-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: 0.75rem 0; }
+        .score-edit { width: 72px; background: rgba(15,23,42,0.7); border: 1px solid var(--border-color); border-radius: 0.4rem; color: var(--text-primary); padding: 0.35rem 0.5rem; }
 
         .dry-run-panel { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.85rem; background: rgba(59,130,246,0.04); border: 1px solid rgba(59,130,246,0.15); border-radius: 0.6rem; }
         .dry-run-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent-primary); }

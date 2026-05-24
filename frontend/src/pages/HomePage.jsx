@@ -15,7 +15,7 @@ const HomePage = () => {
           </h1>
           <p className="hero-subtitle">
             An open-source, high-performance online judge for algorithmic problem solving.
-            Practice coding challenges and compete on the leaderboard.
+            Practice coding challenges and compete in timed contests.
           </p>
           <div className="hero-actions">
             <Link to="/problems" className="btn btn-primary btn-lg">
@@ -44,7 +44,7 @@ const HomePage = () => {
               <Terminal size={24} />
             </div>
             <h3>Multiple Languages</h3>
-            <p>Submit your solutions in C++, Python, Java, and and Javascript with secure, isolated Docker environments.</p>
+            <p>Submit your solutions in C++, Python, and Java with secure, isolated Docker environments.</p>
           </div>
 
           <div className="feature-card glass-card">

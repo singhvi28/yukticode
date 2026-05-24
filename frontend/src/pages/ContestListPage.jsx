@@ -1,28 +1,36 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Loader, Calendar, Clock, CheckCircle, ChevronRight, Trophy } from 'lucide-react';
 import api from '../api';
+import { useAuth } from '../context/AuthContext';
 
 const ContestListPage = () => {
   const [contests, setContests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [needsAuth, setNeedsAuth] = useState(false);
   const [registeringId, setRegisteringId] = useState(null);
   const [now, setNow] = useState(new Date());
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   useEffect(() => {
     const fetchContests = async () => {
       try {
         const res = await api.get('/contests');
         setContests(res.data || []);
+        setNeedsAuth(false);
       } catch (err) {
         console.error('Failed to load contests', err);
+        if (err.response?.status === 401) {
+          setNeedsAuth(true);
+          setContests([]);
+        }
       } finally {
         setLoading(false);
       }
     };
     fetchContests();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
@@ -64,6 +72,19 @@ const ContestListPage = () => {
     return (
       <div className="loading-center">
         <Loader className="spin" size={32} />
+      </div>
+    );
+  }
+
+  if (needsAuth) {
+    return (
+      <div className="contest-hub animate-fade-in">
+        <div className="hub-header">
+          <h1>
+            <Trophy size={28} style={{ color: 'var(--accent-primary)' }} /> Contest Arena
+          </h1>
+          <p>Please <Link to="/login?next=/contests">log in</Link> to browse and register for contests.</p>
+        </div>
       </div>
     );
   }

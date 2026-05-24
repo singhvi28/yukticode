@@ -36,10 +36,10 @@ const Navbar = () => {
         <div className="nav-auth">
           {user ? (
             <div className="user-menu">
-              <span className="user-greeting">
+              <Link to="/profile" className="user-greeting">
                 <User size={16} />
                 {user.username}
-              </span>
+              </Link>
               <button className="btn btn-secondary btn-sm" onClick={handleLogout}>
                 <LogOut size={16} /> Logout
               </button>
@@ -135,7 +135,9 @@ const Navbar = () => {
           gap: 0.5rem;
           font-weight: 500;
           color: var(--accent-primary);
+          text-decoration: none;
         }
+        .user-greeting:hover { color: #94a3b8; }
       `}</style>
     </nav>
   );
