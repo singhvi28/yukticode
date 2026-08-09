@@ -3,13 +3,18 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Loader, Calendar, Clock, Trophy, ArrowLeft, CheckCircle, XCircle } from 'lucide-react';
 import api from '../api';
 import ContestLeaderboard from '../components/ContestLeaderboard';
+import { useAuth } from '../context/AuthContext';
 
 const ContestArenaPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [contest, setContest] = useState(null);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
+  const [registering, setRegistering] = useState(false);
+  const [registered, setRegistered] = useState(false);
+  const [regMessage, setRegMessage] = useState(null);
 
   useEffect(() => {
     const fetchContest = async () => {
@@ -29,6 +34,30 @@ const ContestArenaPage = () => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const handleRegister = async () => {
+    if (!user) {
+      navigate(`/login?next=/contests/${id}`);
+      return;
+    }
+    setRegistering(true);
+    setRegMessage(null);
+    try {
+      await api.post(`/contests/${id}/register`);
+      setRegistered(true);
+      setRegMessage('Registered!');
+    } catch (err) {
+      const detail = err.response?.data?.detail || 'Failed to register.';
+      if (String(detail).toLowerCase().includes('already registered')) {
+        setRegistered(true);
+        setRegMessage('Already registered');
+      } else {
+        setRegMessage(detail);
+      }
+    } finally {
+      setRegistering(false);
+    }
+  };
 
   const getStatus = () => {
     if (!contest?.start_time || !contest?.end_time)
@@ -102,6 +131,23 @@ const ContestArenaPage = () => {
               : '—'}
           </span>
         </div>
+        {status !== 'ENDED' && !registered && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleRegister}
+            disabled={registering}
+            style={{ marginTop: '1rem' }}
+          >
+            {registering ? <Loader size={14} className="spin" /> : null}
+            {user ? 'Register for contest' : 'Log in to register'}
+          </button>
+        )}
+        {(registered || regMessage) && (
+          <p style={{ marginTop: '0.75rem', color: 'var(--success)', fontSize: '0.9rem' }}>
+            {regMessage || 'Registered'}
+          </p>
+        )}
         {status === 'ENDED' && (
           <Link to={`/contests/${id}/leaderboard`} className="btn btn-primary">
             Final Standings
