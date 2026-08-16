@@ -171,9 +171,5 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Local Scratch & Temp Files
-test_hang.py
-test_tar.py
-
 # Judger local volumes (legacy)
 judger_vol_path/
