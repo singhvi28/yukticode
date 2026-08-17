@@ -16,11 +16,3 @@ if ROOT not in sys.path:
 WORKER_DIR = os.path.join(ROOT, 'worker')
 if WORKER_DIR not in sys.path:
     sys.path.insert(0, WORKER_DIR)
-
-from unittest.mock import MagicMock
-
-# Stub ``pika`` at import time so worker modules never attempt a real TCP
-# connection to RabbitMQ when they are imported during test collection.
-# Individual tests can still ``patch('worker.messaging.pika')`` to configure
-# specific return values.
-sys.modules.setdefault('pika', MagicMock())

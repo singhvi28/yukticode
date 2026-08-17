@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run YuktiCode locally without docker compose.
-# Requires: PostgreSQL, RabbitMQ, Redis, MinIO, and Docker (for code judging).
+# Requires: PostgreSQL, RabbitMQ, Redis, and Docker (for code judging).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,7 +9,7 @@ FRONTEND="$ROOT/frontend"
 PID_DIR="$ROOT/.local/pids"
 LOG_DIR="$ROOT/.local/logs"
 
-mkdir -p "$PID_DIR" "$LOG_DIR" "$ROOT/.local/minio-data"
+mkdir -p "$PID_DIR" "$LOG_DIR"
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -27,18 +27,13 @@ require_cmd python3
 require_cmd npm
 require_cmd node
 
-for svc in "PostgreSQL:5432" "RabbitMQ:5672" "Redis:6379" "MinIO:9005"; do
+for svc in "PostgreSQL:5432" "RabbitMQ:5672" "Redis:6379"; do
   name="${svc%%:*}"
   port="${svc##*:}"
   if check_port "$port"; then
     echo "  OK  $name (port $port)"
   else
     echo "  !!  $name is not listening on port $port"
-    if [ "$name" = "MinIO" ]; then
-      echo "      Start MinIO, e.g.:"
-      echo "        MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \\"
-      echo "          minio server $ROOT/.local/minio-data --address :9005 --console-address :9001"
-    fi
     exit 1
   fi
 done
@@ -51,7 +46,7 @@ fi
 
 echo "==> Installing backend deps (if needed)..."
 cd "$BACKEND"
-python3 -m pip install -q -r requirements.txt python-jose[cryptography] python-multipart minio python-dotenv
+python3 -m pip install -q -r requirements.txt python-jose[cryptography] python-multipart python-dotenv
 
 echo "==> Checking database connection..."
 if ! python3 - <<'PY'
