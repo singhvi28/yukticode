@@ -345,49 +345,8 @@ async def admin_run_testcase(
 
 
 # ---------------------------------------------------------------------------
-# Dry-run result handler (Redis-backed, multi-process safe)
+# Dry-run polling fallback
 # ---------------------------------------------------------------------------
-
-
-from pydantic import BaseModel as _BM
-class RunResultPayload(_BM):
-    status: str
-    std_out: str = ""
-    message: str = ""
-
-@router.post("/run-result/{run_id}", include_in_schema=False)
-async def admin_run_result_callback(run_id: str, payload: RunResultPayload):
-    """Internal callback endpoint hit by the run worker after judging."""
-    r = await _get_redis()
-    raw = await r.get(f"admin_run:{run_id}")
-    if not raw:
-        return {"msg": "run_id expired or not found"}
-
-    pending = json.loads(raw)
-    expected = pending["expected_output"]
-
-    # Respect the worker's status first — only compare output on AC
-    if payload.status != "AC":
-        verdict = payload.status
-    else:
-        def norm(s): return "\n".join(l.rstrip() for l in s.strip().splitlines())
-        verdict = "AC" if norm(payload.std_out) == norm(expected) else "WA"
-
-    result_data = {
-        "worker_status": payload.status,
-        "verdict": verdict,
-        "std_out": payload.std_out,
-        "expected": expected,
-        "message": payload.message,
-    }
-
-    # Store result in Redis and broadcast via WebSocket for real-time delivery
-    await r.set(f"admin_result:{run_id}", json.dumps(result_data), ex=60)
-    await r.delete(f"admin_run:{run_id}")
-    await ws_manager.broadcast(run_id, result_data)
-
-    return {"msg": "received"}
-
 
 @router.get("/run-result/{run_id}")
 async def admin_poll_run_result(run_id: str, admin: User = Depends(admin_required)):
