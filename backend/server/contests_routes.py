@@ -3,9 +3,8 @@ Public contest API — GET /contests, GET /contests/:id, POST /contests/:id/regi
 """
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
-import pytz
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -129,7 +128,7 @@ async def register_for_contest(
     new_reg = ContestRegistration(
         user_id=current_user.id,
         contest_id=contest_id,
-        registered_at=datetime.now(pytz.utc),
+        registered_at=datetime.now(timezone.utc),
     )
     db.add(new_reg)
     await db.commit()

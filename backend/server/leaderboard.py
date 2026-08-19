@@ -4,9 +4,8 @@ Uses Redis Hashes for per-user problem state and a ZSET for global ranking.
 """
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
-import pytz
 import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -148,7 +147,7 @@ async def update_leaderboard_on_verdict(
         return
     start_time = contest.start_time
     if getattr(start_time, "tzinfo", None) is None:
-        start_time = pytz.utc.localize(start_time)
+        start_time = start_time.replace(tzinfo=timezone.utc)
 
     cp_result = await db.execute(
         select(ContestProblem).where(
@@ -161,9 +160,9 @@ async def update_leaderboard_on_verdict(
 
     submitted_at = submission.submitted_at
     if not submitted_at:
-        submitted_at = datetime.now(pytz.utc)
+        submitted_at = datetime.now(timezone.utc)
     elif getattr(submitted_at, "tzinfo", None) is None:
-        submitted_at = pytz.utc.localize(submitted_at)
+        submitted_at = submitted_at.replace(tzinfo=timezone.utc)
 
     manager = ContestLeaderboardManager(redis_client)
     await manager.process_submission(

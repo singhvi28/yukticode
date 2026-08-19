@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from passlib.context import CryptContext
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 from fastapi.security import OAuth2PasswordBearer
 import os
@@ -11,10 +11,9 @@ from server.db.database import get_db_session
 from server.db.models import User
 from server.models import UserCreate, UserLogin, UserResponse
 
-# Security configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your-super-secret-key-for-jwt-signing")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
@@ -30,12 +29,11 @@ def get_password_hash(password):
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db_session)):
     credentials_exception = HTTPException(
@@ -80,13 +78,11 @@ async def get_current_user_optional(
 
 @router.post("/register", response_model=UserResponse)
 async def register_user(user_in: UserCreate, db: AsyncSession = Depends(get_db_session)):
-    # Check if user already exists
     stmt = select(User).where((User.username == user_in.username) | (User.email == user_in.email))
     result = await db.execute(stmt)
     if result.scalars().first():
         raise HTTPException(status_code=400, detail="Username or Email already registered")
 
-    # Create new user instance
     hashed_pwd = get_password_hash(user_in.password)
     new_user = User(
         username=user_in.username,

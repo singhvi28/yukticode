@@ -3,17 +3,13 @@ import hashlib
 import hmac
 import json
 import uuid
-from datetime import datetime as dt
-import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, Request, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
-from typing import List
-import pytz
-from pydantic import BaseModel
 
 from .models import SubmitRequest, RunRequest, RunBatchRequest
 from .config import SUBMIT_EXCHANGE, SUBMIT_ROUTING_KEY, RUN_EXCHANGE, RUN_ROUTING_KEY, WEBHOOK_SECRET
@@ -23,7 +19,6 @@ from server.leaderboard import update_leaderboard_on_verdict
 from server.db.database import get_db_session
 from server.db.models import Problem, Submission, User, TestCase, Contest, ContestProblem
 from server.auth import get_current_user
-from urllib.parse import quote
 
 router = APIRouter()
 
@@ -63,10 +58,10 @@ async def submit(
         contest_result = await db.execute(contest_stmt)
         contest = contest_result.scalars().first()
         if contest and contest.start_time:
-            current_time = dt.now(datetime.timezone.utc)
+            current_time = datetime.now(timezone.utc)
             start_time = contest.start_time
             if getattr(start_time, "tzinfo", None) is None:
-                start_time = start_time.replace(tzinfo=datetime.timezone.utc)
+                start_time = start_time.replace(tzinfo=timezone.utc)
             if current_time < start_time:
                 raise HTTPException(
                     status_code=403,
@@ -365,12 +360,12 @@ async def get_problem(problem_id: int, db: AsyncSession = Depends(get_db_session
     )
     contest_result = await db.execute(contest_stmt)
     linked_contests = contest_result.scalars().all()
-    current_time = dt.now(datetime.timezone.utc)
+    current_time = datetime.now(timezone.utc)
     for contest in linked_contests:
         if contest.start_time:
             start_time = contest.start_time
             if getattr(start_time, "tzinfo", None) is None:
-                start_time = start_time.replace(tzinfo=datetime.timezone.utc)
+                start_time = start_time.replace(tzinfo=timezone.utc)
             if current_time < start_time:
                 raise HTTPException(
                     status_code=403,
