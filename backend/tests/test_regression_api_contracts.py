@@ -10,6 +10,7 @@ Bug 5: GET /submissions/{id} requires Bearer auth.
 These tests verify the precise API contract so that client scripts like
 test_submission.py are guaranteed to work correctly.
 """
+import contextlib
 import pytest
 import pytest_asyncio
 from unittest.mock import AsyncMock
@@ -52,11 +53,12 @@ async def test_app(db_engine):
         async with session_factory() as session:
             yield session
 
-    app = FastAPI()
-
-    @app.on_event("startup")
-    async def _attach_mq():
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
         app.state.mq = AsyncMock()
+        yield
+
+    app = FastAPI(lifespan=lifespan)
 
     app.include_router(api_router)
     app.include_router(auth_router)

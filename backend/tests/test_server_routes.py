@@ -80,12 +80,14 @@ def client():
     async def override_get_current_user():
         return User(id=1, username="test", email="test@test.com")
 
-    app = FastAPI()
+    import contextlib
 
-    # Attach mock mq to app.state (mirrors lifespan behaviour)
-    @app.on_event("startup")
-    async def startup():
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
         app.state.mq = mock_mq
+        yield
+
+    app = FastAPI(lifespan=lifespan)
 
     app.include_router(router)
     app.dependency_overrides[get_current_user] = override_get_current_user
