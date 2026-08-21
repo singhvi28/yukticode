@@ -1,200 +1,276 @@
 """
-E2E API test suite.
-Registers a fresh user, logs in, and submits code for 5 different verdicts
-(AC, RE, TLE for Python/C++/Java) using the backend API + WebSocket, instead
-of a browser.
-
-Routes discovered from backend/server/{main,auth,routes}.py:
-  - POST /auth/register   JSON: {username, email, password}
-  - POST /auth/login      JSON: {username, password}
-  - POST /submit          JSON: {problem_id, language, src_code}, Bearer token
-  - WS   /ws/submissions/{id}  -> one JSON message then close
+Robust E2E API test suite for Competitive Programming Judger.
+Registers a fresh user, logs in, and submits code for various verdicts.
 """
 
 import asyncio
 import httpx
-import websockets
-import json
+import logging
+import os
+import time
 import uuid
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
 
-BASE_URL = "http://127.0.0.1:9000"
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("e2e_suite")
 
+BASE_URL = os.getenv("API_URL", "http://127.0.0.1:9000")
+NON_TERMINAL_STATES = {"PENDING", "QUEUED", "JUDGING", "COMPILING"}
 
-async def wait_for_verdict(client: httpx.AsyncClient, submission_id: int,
-                           token: str, timeout: int = 90) -> dict:
-    """Poll GET /submissions/{id} until status is no longer PENDING."""
-    headers = {"Authorization": f"Bearer {token}"}
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        r = await client.get(f"{BASE_URL}/submissions/{submission_id}",
-                             headers=headers)
-        if r.status_code == 200:
-            data = r.json()
-            status = data.get("status", "PENDING")
-            if status != "PENDING":
-                return data
-        await asyncio.sleep(2)
-    raise asyncio.TimeoutError(f"Timed out after {timeout}s")
+@dataclass
+class TestCase:
+    name: str
+    language: str
+    expected_verdict: str
+    code: str
 
+class JudgerAPIClient:
+    """Encapsulates all API interactions for the test suite."""
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+        self.client: Optional[httpx.AsyncClient] = None
+        self.token: Optional[str] = None
 
-async def test_submission(client: httpx.AsyncClient, token: str,
-                          lang: str, code: str, expected_verdict: str):
-    print(f"\n{'─'*50}")
-    print(f"  Language : {lang}")
-    print(f"  Expected : {expected_verdict}")
+    async def __aenter__(self):
+        self.client = httpx.AsyncClient(timeout=15.0)
+        return self
 
-    # POST /submit
-    resp = await client.post(
-        f"{BASE_URL}/submit",
-        json={"problem_id": 1, "language": lang, "src_code": code},
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.client:
+            await self.client.aclose()
 
-    if resp.status_code != 200:
-        print(f"  ❌ Submit failed ({resp.status_code}): {resp.text}")
+    def _auth_headers(self) -> dict:
+        if not self.token:
+            raise ValueError("Not authenticated. Call login() first.")
+        return {"Authorization": f"Bearer {self.token}"}
+
+    async def register(self, username: str, email: str, password: str) -> bool:
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}/auth/register",
+                json={"username": username, "email": email, "password": password}
+            )
+            if resp.status_code in (200, 201):
+                return True
+            logger.error(f"Registration failed ({resp.status_code}): {resp.text}")
+            return False
+        except httpx.RequestError as e:
+            logger.error(f"Network error during registration: {e}")
+            return False
+
+    async def login(self, username: str, password: str) -> bool:
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}/auth/login",
+                json={"username": username, "password": password}
+            )
+            if resp.status_code == 200:
+                self.token = resp.json().get("access_token")
+                return True
+            logger.error(f"Login failed ({resp.status_code}): {resp.text}")
+            return False
+        except httpx.RequestError as e:
+            logger.error(f"Network error during login: {e}")
+            return False
+
+    async def check_problem(self, problem_id: int) -> bool:
+        try:
+            resp = await self.client.get(f"{self.base_url}/problems/{problem_id}")
+            if resp.status_code == 200:
+                title = resp.json().get('title', 'Unknown Title')
+                logger.info(f"Problem {problem_id} found: '{title}'")
+                return True
+            logger.error(f"Problem {problem_id} not found ({resp.status_code})")
+            return False
+        except httpx.RequestError as e:
+            logger.error(f"Network error checking problem: {e}")
+            return False
+
+    async def submit_code(self, problem_id: int, language: str, code: str) -> Optional[int]:
+        try:
+            resp = await self.client.post(
+                f"{self.base_url}/submit",
+                json={"problem_id": problem_id, "language": language, "src_code": code},
+                headers=self._auth_headers()
+            )
+            if resp.status_code in (200, 201):
+                return resp.json().get("submission_id")
+            logger.error(f"Submit failed ({resp.status_code}): {resp.text}")
+            return None
+        except httpx.RequestError as e:
+            logger.error(f"Network error during submission: {e}")
+            return None
+
+    async def wait_for_verdict(self, submission_id: int, timeout: int = 90) -> Dict[str, Any]:
+        """Polls the API until the submission reaches a terminal state."""
+        start_time = time.monotonic()
+        
+        while time.monotonic() - start_time < timeout:
+            try:
+                resp = await self.client.get(
+                    f"{self.base_url}/submissions/{submission_id}",
+                    headers=self._auth_headers()
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    status = data.get("status", "UNKNOWN")
+                    
+                    if status not in NON_TERMINAL_STATES:
+                        return data
+                    
+                else:
+                    logger.warning(f"Failed to fetch status ({resp.status_code}) - Retrying...")
+            except httpx.RequestError as e:
+                logger.warning(f"Network error while polling (retrying): {e}")
+
+            await asyncio.sleep(2)  # Polling interval
+            
+        raise asyncio.TimeoutError(f"Timed out after {timeout}s waiting for terminal verdict.")
+
+async def run_test_case(api: JudgerAPIClient, test: TestCase, problem_id: int = 1) -> bool:
+    logger.info(f"Running Test: {test.name} [{test.language.upper()}] - Expected: {test.expected_verdict}")
+    
+    sub_id = await api.submit_code(problem_id, test.language, test.code)
+    if not sub_id:
         return False
 
-    submission_id = resp.json()["submission_id"]
-    print(f"  Sub ID   : {submission_id} — waiting for verdict …")
+    logger.info(f"↳ Submission ID {sub_id} created. Waiting for verdict...")
 
     try:
-        result = await wait_for_verdict(client, submission_id, token, timeout=90)
-    except asyncio.TimeoutError:
-        print("  ❌ Timed out waiting for WebSocket verdict")
-        return False
-    except Exception as exc:
-        print(f"  ❌ WS error: {exc}")
+        result = await api.wait_for_verdict(sub_id, timeout=90)
+    except asyncio.TimeoutError as e:
+        logger.error(f"↳ ❌ {e}")
         return False
 
-    status    = result.get("status", "UNKNOWN")
-    time_ms   = result.get("execution_time_ms", "-")
-    mem_mb    = result.get("peak_memory_mb", "-")
+    status = result.get("status", "UNKNOWN")
+    time_ms = result.get("execution_time_ms", 0.0)
+    mem_mb = result.get("peak_memory_mb", 0.0)
 
-    print(f"  Verdict  : {status}  (time={time_ms}ms  mem={mem_mb}MB)")
-
-    if status == expected_verdict:
-        print(f"  ✅ PASSED")
+    if status == test.expected_verdict:
+        logger.info(f"↳ ✅ PASSED: {status} (time={time_ms}ms, mem={mem_mb}MB)")
         return True
     else:
-        print(f"  ❌ FAILED — expected {expected_verdict}, got {status}")
+        logger.error(f"↳ ❌ FAILED: Expected {test.expected_verdict}, got {status}")
         return False
 
-
 async def main():
-    suffix   = str(uuid.uuid4())[:8]
+    # ── Test Suite Data ──────────────────────────────────────────────────
+    tests = [
+        TestCase(
+            name="C++ Two Sum O(n)",
+            language="cpp",
+            expected_verdict="AC",
+            code=(
+                '#include<iostream>\n#include<vector>\n#include<unordered_map>\nusing namespace std;\n'
+                'int main(){\n'
+                '    int n; cin>>n;\n'
+                '    vector<int> nums(n);\n'
+                '    for(int&x:nums) cin>>x;\n'
+                '    int target; cin>>target;\n'
+                '    unordered_map<int,int> seen;\n'
+                '    for(int i=0;i<n;i++){\n'
+                '        int comp=target-nums[i];\n'
+                '        if(seen.count(comp)){cout<<seen[comp]<<" "<<i<<"\\n";return 0;}\n'
+                '        seen[nums[i]]=i;\n'
+                '    }\n'
+                '    return 0;\n'
+                '}'
+            )
+        ),
+        TestCase(
+            name="C++ Null Pointer Deref",
+            language="cpp",
+            expected_verdict="RE",
+            code='#include<iostream>\nusing namespace std;\nint main(){int*p=nullptr;*p=42;return 0;}'
+        ),
+        TestCase(
+            name="Python Two Sum O(n)",
+            language="py",
+            expected_verdict="AC",
+            code=(
+                'n = int(input())\nnums = list(map(int, input().split()))\ntarget = int(input())\n'
+                'seen = {}\n'
+                'for i, v in enumerate(nums):\n'
+                '    comp = target - v\n'
+                '    if comp in seen:\n'
+                '        print(seen[comp], i)\n'
+                '        break\n'
+                '    seen[v] = i\n'
+            )
+        ),
+        TestCase(
+            name="Python Infinite Loop",
+            language="py",
+            expected_verdict="TLE",
+            code="while True: pass"
+        ),
+        TestCase(
+            name="Java Two Sum O(n)",
+            language="java",
+            expected_verdict="AC",
+            code=(
+                'import java.util.*;\n'
+                'public class Main {\n'
+                '    public static void main(String[] args) {\n'
+                '        Scanner sc = new Scanner(System.in);\n'
+                '        int n = sc.nextInt();\n'
+                '        int[] nums = new int[n];\n'
+                '        for (int i = 0; i < n; i++) nums[i] = sc.nextInt();\n'
+                '        int target = sc.nextInt();\n'
+                '        Map<Integer,Integer> seen = new HashMap<>();\n'
+                '        for (int i = 0; i < n; i++) {\n'
+                '            int comp = target - nums[i];\n'
+                '            if (seen.containsKey(comp)) {\n'
+                '                System.out.println(seen.get(comp) + " " + i);\n'
+                '                return;\n'
+                '            }\n'
+                '            seen.put(nums[i], i);\n'
+                '        }\n'
+                '    }\n'
+                '}'
+            )
+        ),
+    ]
+
+    # ── Execution ────────────────────────────────────────────────────────
+    suffix = str(uuid.uuid4())[:8]
     username = f"e2e_{suffix}"
-    email    = f"e2e_{suffix}@test.com"
+    email = f"e2e_{suffix}@test.com"
     password = "TestPass123!"
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with JudgerAPIClient(BASE_URL) as api:
+        logger.info(f"--- Starting E2E Test Suite against {BASE_URL} ---")
 
-        # ── 1. Register ──────────────────────────────────────────────────────
-        print(f"\n[1] Registering user: {username}")
-        r = await client.post(f"{BASE_URL}/auth/register",
-                              json={"username": username,
-                                    "email": email,
-                                    "password": password})
-        if r.status_code not in (200, 201):
-            print(f"    ❌ Register failed ({r.status_code}): {r.text}")
-            return
-        print(f"    ✅ Registered (status={r.status_code})")
-
-        # ── 2. Login ─────────────────────────────────────────────────────────
-        print(f"\n[2] Logging in as {username}")
-        r = await client.post(f"{BASE_URL}/auth/login",
-                              json={"username": username,
-                                    "password": password})
-        if r.status_code != 200:
-            print(f"    ❌ Login failed ({r.status_code}): {r.text}")
+        logger.info(f"Registering ephemeral user: {username}")
+        if not await api.register(username, email, password):
             return
 
-        token = r.json()["access_token"]
-        print(f"    ✅ Login OK — token obtained")
-
-        # ── 3. Check Problem 1 exists ─────────────────────────────────────────
-        print(f"\n[3] Checking problem 1 …")
-        r = await client.get(f"{BASE_URL}/problems/1")
-        if r.status_code != 200:
-            print(f"    ❌ Problem 1 not found ({r.status_code}): {r.text}")
+        logger.info("Logging in...")
+        if not await api.login(username, password):
             return
-        print(f"    ✅ Problem: {r.json().get('title', '?')}")
 
-        # ── 4. Submission tests ───────────────────────────────────────────────
-        print(f"\n[4] Running submission tests …")
+        logger.info("Verifying target problem exists...")
+        if not await api.check_problem(1):
+            logger.error("Aborting tests because Problem 1 does not exist.")
+            return
 
-        # Helper test codes — problem 1 expects "1 2" on stdout
-        tests = [
-            # (language, expected_verdict, code)
-            # Two Sum in C++ — O(n) hash map
-            ("cpp", "AC",
-             '#include<iostream>\n#include<vector>\n#include<unordered_map>\nusing namespace std;\n'
-             'int main(){\n'
-             '    int n; cin>>n;\n'
-             '    vector<int> nums(n);\n'
-             '    for(int&x:nums) cin>>x;\n'
-             '    int target; cin>>target;\n'
-             '    unordered_map<int,int> seen;\n'
-             '    for(int i=0;i<n;i++){\n'
-             '        int comp=target-nums[i];\n'
-             '        if(seen.count(comp)){cout<<seen[comp]<<" "<<i<<"\\n";return 0;}\n'
-             '        seen[nums[i]]=i;\n'
-             '    }\n'
-             '    return 0;\n'
-             '}'),
+        print(f"\n{'═'*60}")
+        passed_count = 0
+        for test in tests:
+            if await run_test_case(api, test, problem_id=1):
+                passed_count += 1
+            print(f"{'─'*60}")
 
-            # C++ with nullptr dereference → RE
-            ("cpp", "RE",
-             '#include<iostream>\nusing namespace std;\n'
-             'int main(){int*p=nullptr;*p=42;return 0;}'),
-
-            # Two Sum in Python — O(n) hash map
-            ("py", "AC",
-             'n = int(input())\nnums = list(map(int, input().split()))\ntarget = int(input())\n'
-             'seen = {}\n'
-             'for i, v in enumerate(nums):\n'
-             '    comp = target - v\n'
-             '    if comp in seen:\n'
-             '        print(seen[comp], i)\n'
-             '        break\n'
-             '    seen[v] = i\n'),
-
-            # Infinite loop → TLE
-            ("py", "TLE",
-             "while True: pass"),
-
-            # Two Sum in Java
-            ("java", "AC",
-             'import java.util.*;\n'
-             'public class Main {\n'
-             '    public static void main(String[] args) {\n'
-             '        Scanner sc = new Scanner(System.in);\n'
-             '        int n = sc.nextInt();\n'
-             '        int[] nums = new int[n];\n'
-             '        for (int i = 0; i < n; i++) nums[i] = sc.nextInt();\n'
-             '        int target = sc.nextInt();\n'
-             '        Map<Integer,Integer> seen = new HashMap<>();\n'
-             '        for (int i = 0; i < n; i++) {\n'
-             '            int comp = target - nums[i];\n'
-             '            if (seen.containsKey(comp)) {\n'
-             '                System.out.println(seen.get(comp) + " " + i);\n'
-             '                return;\n'
-             '            }\n'
-             '            seen.put(nums[i], i);\n'
-             '        }\n'
-             '    }\n'
-             '}'),
-        ]
-
-        passed = 0
-        for lang, expected, code in tests:
-            ok = await test_submission(client, token, lang, code, expected)
-            if ok:
-                passed += 1
-
-        print(f"\n{'═'*50}")
-        print(f"Results: {passed}/{len(tests)} tests passed")
-        print(f"{'═'*50}\n")
-
+        logger.info(f"Test Suite Completed. Results: {passed_count}/{len(tests)} passed.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Test suite aborted by user.")
