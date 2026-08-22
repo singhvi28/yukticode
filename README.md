@@ -216,7 +216,7 @@ cd backend
 # Fast targeted tests (no Docker/DB required)
 python3 -m pytest tests/test_regression_queue_names.py \
                   tests/test_regression_async_callback.py \
-                  tests/test_worker_messaging.py \
+                  tests/test_server_messaging.py \
                   tests/test_worker_callback.py -v
 ```
 
@@ -225,7 +225,7 @@ python3 -m pytest tests/test_regression_queue_names.py \
 ```bash
 cd e2e_tests
 # Complete integration test against a live backend/worker environment
-python3 e2e_api_test2.py
+python3 e2e_api_test.py
 ```
 
 ---
@@ -247,10 +247,10 @@ cf-clone/
 │   │   ├── admin.py         # Admin CRUD routes
 │   │   ├── ws.py            # WebSocket ConnectionManager
 │   │   ├── config.py        # Queue names, env vars
+│   │   ├── alembic/         # Migration scripts
 │   │   └── db/
 │   │       ├── models.py    # SQLAlchemy ORM models
-│   │       ├── database.py  # Async session factory
-│   │       └── alembic/     # Migration scripts
+│   │       └── database.py  # Async session factory
 │   ├── worker/
 │   │   ├── submit_worker.py # Async aio_pika worker for code submissions
 │   │   ├── run_worker.py    # Async aio_pika worker for custom runs
@@ -263,9 +263,7 @@ cf-clone/
 │   │       └── languages/
 │   └── tests/               # See TESTING.md
 ├── e2e_tests/               # End-to-end API tests
-│   ├── e2e_api_test2.py
-│   ├── e2e_api_test.py
-│   └── e2e_test.py
+│   └── e2e_api_test.py
 └── frontend/
     ├── Dockerfile
     ├── nginx.conf

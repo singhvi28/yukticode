@@ -14,7 +14,7 @@ python3 -m pytest tests/ -v
 python3 -m pytest \
   tests/test_regression_queue_names.py \
   tests/test_regression_async_callback.py \
-  tests/test_worker_messaging.py \
+  tests/test_server_messaging.py \
   tests/test_worker_callback.py \
   -v
 
@@ -31,11 +31,11 @@ python3 -m pytest tests/ -v -s
 
 | File | What it tests |
 |------|---------------|
-| `test_judger_core.py` | `run_judger` and `custom_run` orchestration: AC, WA, CE, TLE, RE, SYSTEM_ERROR verdicts. Mocks Docker layer. **Now asserts return type is `dict` with `verdict`, `execution_time_ms`, `peak_memory_mb` keys.** Pulls execution metrics directly from the `isolate` sandboxing `meta.txt` log instead of `container.stats`. |
+| `test_judger_core.py` | `run_judger` and `custom_run` orchestration: AC, WA, CE, TLE, RE, SYSTEM_ERROR verdicts. Mocks Docker layer. Asserts return type is `dict` with `verdict`, `execution_time_ms`, `peak_memory_mb` keys. |
 | `test_judger_compare.py` | `compare_outputs` whitespace-insensitive judge comparison |
 | `test_judger_file_utils.py` | In-memory POSIX tar streaming (`put_archive` / `get_archive`) used for container I/O |
 | `test_judger_result_mapper.py` | Exit code → verdict mapping (e.g. `137 → MLE`, `143 → TLE`) |
-| `test_docker_manager.py` | Docker container provisioned with `mem_limit`, `SYS_ADMIN` cap, disabled AppArmor, `auto_remove=True` |
+| `test_docker_manager.py` | Docker container provisioned with `mem_limit`, pids limit, network disabled |
 
 ### Server Unit Tests
 
@@ -52,19 +52,18 @@ python3 -m pytest tests/ -v -s
 | File | What it tests |
 |------|---------------|
 | `test_worker_callback.py` | `http_callback` helpers: POST submit/run/batch verdicts via mocked `httpx.Client` |
-| `test_worker_messaging.py` | Sync `pika` consumer: `auto_ack=False`, `prefetch_count=1`, queue declare with `passive=True` |
 
 ### Regression Tests
 
 | File | What it tests | Why it exists |
 |------|---------------|---------------|
 | `test_regression_queue_names.py` | Workers import `SUBMIT_QUEUE`/`RUN_QUEUE` from `server.config`, not hardcoded strings | Bug: hardcoded names caused silent routing mismatches |
-| `test_regression_async_callback.py` | Workers are async aio_pika consumers; verdicts reported via sync `http_callback` helpers (not `asyncio.run` inside the callback) | Bug: `asyncio.run()` inside pika callback raises `RuntimeError: loop already running` |
+| `test_regression_async_callback.py` | Workers are async aio_pika consumers; verdicts reported via sync `http_callback` helpers | Bug: `asyncio.run()` inside async consumer raises `RuntimeError: loop already running` |
 
 ## Mocking Strategy
 
-### RabbitMQ / pika
-Importing `pika` at test collection time causes network connection attempts. `conftest.py` stubs `sys.modules['pika']` early. Individual test modules that exercise workers use `patch.dict('sys.modules', {...})` to control the import environment cleanly.
+### RabbitMQ
+The application and workers use async `aio-pika`. Tests that exercise messaging mock `aio_pika` connections and channels using `unittest.mock.AsyncMock`.
 
 ### Database
 Tests that exercise FastAPI routes use `sqlite+aiosqlite:///:memory:` injected via FastAPI's dependency override mechanism — no PostgreSQL required.

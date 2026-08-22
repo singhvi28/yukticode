@@ -12,7 +12,7 @@ cd backend
 python3 -m pytest \
   tests/test_regression_queue_names.py \
   tests/test_regression_async_callback.py \
-  tests/test_worker_messaging.py \
+  tests/test_server_messaging.py \
   tests/test_worker_callback.py -v
 
 # Full suite
