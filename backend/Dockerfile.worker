@@ -36,15 +36,8 @@ WORKDIR /app/worker
 CMD ["python3", "run_worker.py"]
 
 # ---------------------------------------------------------------------------
-# celery_worker target — runs scheduled reaping tasks (needs Docker socket)
+# reaper target — lightweight background scavenger for orphaned containers
 # ---------------------------------------------------------------------------
-FROM base AS celery_worker
-WORKDIR /app
-CMD ["celery", "-A", "worker.tasks", "worker", "--loglevel=info"]
-
-# ---------------------------------------------------------------------------
-# celery_beat target — triggers scheduled tasks
-# ---------------------------------------------------------------------------
-FROM base AS celery_beat
-WORKDIR /app
-CMD ["celery", "-A", "worker.tasks", "beat", "--loglevel=info"]
+FROM base AS reaper
+WORKDIR /app/worker
+CMD ["python3", "reaper.py"]

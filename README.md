@@ -156,8 +156,8 @@ VITE_API_URL=http://127.0.0.1:9000
 | `frontend/Dockerfile` | Multi-stage: Node 20 → `npm run build` → Nginx Alpine serves `/dist` |
 | `frontend/nginx.conf` | SPA fallback, `/api/*` proxy, `/ws/*` WebSocket upgrade |
 | `backend/Dockerfile` | Python 3.12-slim; runs `alembic upgrade head` then `uvicorn` |
-| `backend/Dockerfile.worker` | Two build targets: `submit_worker` and `run_worker`; mounts Docker socket |
-| `docker-compose.yml` | Orchestrates postgres, rabbitmq, redis, backend, two judge workers, celery reaper pair, and frontend |
+| `backend/Dockerfile.worker` | Three build targets: `submit_worker`, `run_worker`, and `reaper`; mounts Docker socket |
+| `docker-compose.yml` | Orchestrates postgres, rabbitmq, redis, backend, two judge workers, container reaper, and frontend |
 | `.env.example` | Template for required environment variables |
 
 ---

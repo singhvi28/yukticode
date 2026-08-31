@@ -5,7 +5,6 @@ pydantic==2.12.5
 
 # messaging / queues
 
-celery[redis]==5.4.0
 aio-pika==9.6.1
 redis==5.0.8
 msgpack==1.1.2

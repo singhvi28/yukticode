@@ -7,8 +7,7 @@
 #   backend       — FastAPI server (runs migrations on start)
 #   submit_worker — judger worker for submits (mounts Docker socket)
 #   run_worker    — judger worker for custom runs (mounts Docker socket)
-#   celery_worker — Celery worker for scheduled reaping of orphaned judger containers
-#   celery_beat   — Celery Beat scheduler (triggers reap every 5 min)
+#   reaper        — lightweight background daemon for reaping orphaned containers
 #   frontend      — Nginx serving the Vite SPA + reverse-proxy to backend
 #
 # Quick-start:
@@ -151,35 +150,16 @@ services:
       backend:
         condition: service_healthy
 
-  # ── Celery Worker (container reaping) ──────────────────────────────────────
-  celery_worker:
+  # ── Container Reaper (orphaned judger container scavenger) ─────────────────
+  reaper:
     build:
       context: ./backend
       dockerfile: Dockerfile.worker
-      target: celery_worker
-    container_name: yc-celery-worker
+      target: reaper
+    container_name: yc-reaper
     restart: unless-stopped
-    environment:
-      REDIS_URL: redis://redis:6379/0
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      redis:
-        condition: service_healthy
-
-  # ── Celery Beat (scheduled task trigger) ───────────────────────────────────
-  celery_beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.worker
-      target: celery_beat
-    container_name: yc-celery-beat
-    restart: unless-stopped
-    environment:
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      redis:
-        condition: service_healthy
 
   # ── Frontend (Nginx + Vite SPA) ────────────────────────────────────────────
   frontend:
